@@ -1,0 +1,18 @@
+@if (textPart(); as text) {
+  <app-chat-text-part [part]="text" [streaming]="streaming()" />
+}
+@if (workflowPart(); as workflow) {
+  <app-chat-workflow-part [part]="workflow" />
+}
+@if (toolPart(); as tool) {
+  <app-chat-tool-part [part]="tool" />
+}
+@if (dataPart(); as data) {
+  <app-chat-data-part [part]="data" />
+}
+@if (artifactPart(); as artifact) {
+  <app-chat-artifact-part [part]="artifact" />
+}
+@if (errorPart(); as error) {
+  <app-chat-error-part [part]="error" />
+}

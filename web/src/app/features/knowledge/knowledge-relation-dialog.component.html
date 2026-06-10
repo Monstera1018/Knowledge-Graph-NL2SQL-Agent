@@ -1,0 +1,180 @@
+<div class="knowledge-relation-dialog">
+  <header class="knowledge-relation-dialog__header">
+    <div>
+      <h2 class="knowledge-relation-dialog__title">{{ dialogTitle }}</h2>
+      <p class="knowledge-relation-dialog__subtitle">左侧选表，右侧勾选列；不选列则按整表关联</p>
+    </div>
+    <button
+      type="button"
+      class="app-btn app-btn--icon knowledge-relation-dialog__close"
+      (click)="cancel()"
+      aria-label="关闭"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </header>
+
+  <div class="knowledge-relation-dialog__body">
+    <section class="knowledge-relation-dialog__tables" aria-label="选择表">
+      <label class="app-search knowledge-relation-dialog__search">
+        <mat-icon class="app-search__icon">search</mat-icon>
+        <input
+          class="app-search__input"
+          type="search"
+          placeholder="搜索表名或注释…"
+          [ngModel]="tableQuery()"
+          (ngModelChange)="onTableQueryChange($event)"
+        />
+      </label>
+      <div class="knowledge-relation-dialog__list">
+        @if (tablesLoading()) {
+          <div class="knowledge-relation-dialog__status">
+            <mat-spinner diameter="22" />
+          </div>
+        } @else if (tables().length === 0) {
+          <div class="knowledge-relation-dialog__status">
+            @if (tableQuery().trim()) {
+              未找到匹配的表
+            } @else {
+              暂无可选表
+            }
+          </div>
+        } @else {
+          @for (table of tables(); track table.uuid) {
+            <button
+              type="button"
+              class="knowledge-relation-dialog__table-item"
+              [class.knowledge-relation-dialog__table-item--active]="
+                selectedTable()?.name === table.name
+              "
+              (click)="selectTable(table)"
+            >
+              <span class="knowledge-relation-dialog__table-name" [appTruncateTooltip]="table.name">{{
+                table.name
+              }}</span>
+              @if (table.comment) {
+                <span
+                  class="knowledge-relation-dialog__table-comment"
+                  [appTruncateTooltip]="table.comment"
+                  >{{ table.comment }}</span
+                >
+              }
+            </button>
+          }
+          @if (tablesTotal() > tables().length) {
+            <p class="knowledge-relation-dialog__list-footer">
+              共 {{ tablesTotal() }} 张表，请继续输入关键词以查看其余结果
+            </p>
+          }
+        }
+      </div>
+    </section>
+
+    <section class="knowledge-relation-dialog__columns" aria-label="选择列">
+      @if (!selectedTable()) {
+        <div class="knowledge-relation-dialog__status">请先在左侧选择一张表</div>
+      } @else if (columnsLoading()) {
+        <div class="knowledge-relation-dialog__status">
+          <mat-spinner diameter="22" />
+        </div>
+      } @else {
+        <div class="knowledge-relation-dialog__columns-head">
+          <div class="knowledge-relation-dialog__columns-meta">
+            <h3
+              class="knowledge-relation-dialog__columns-title"
+              [appTruncateTooltip]="selectedTable()!.name"
+            >
+              {{ selectedTable()!.name }}
+            </h3>
+            @if (selectedTable()!.comment) {
+              <p
+                class="knowledge-relation-dialog__columns-comment"
+                [appTruncateTooltip]="selectedTable()!.comment"
+              >
+                {{ selectedTable()!.comment }}
+              </p>
+            }
+          </div>
+          @if (columns().length > 0) {
+            <div class="knowledge-relation-dialog__columns-actions">
+              <button
+                type="button"
+                class="entity-form__btn entity-form__btn--ghost entity-form__btn--sm"
+                [disabled]="wholeTable()"
+                (click)="selectAllColumns()"
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                class="entity-form__btn entity-form__btn--ghost entity-form__btn--sm"
+                [disabled]="wholeTable()"
+                (click)="clearColumns()"
+              >
+                清空
+              </button>
+            </div>
+          }
+        </div>
+
+        <label class="knowledge-relation-dialog__whole-table">
+          <input
+            type="checkbox"
+            [checked]="wholeTable()"
+            (change)="toggleWholeTable($any($event.target).checked)"
+          />
+          <span>整表关联（不指定具体列）</span>
+        </label>
+
+        @if (columns().length === 0) {
+          <div class="knowledge-relation-dialog__status">该表暂无列元数据，将按整表关联</div>
+        } @else {
+          <div class="knowledge-relation-dialog__column-list">
+            @for (column of columns(); track column.uuid) {
+              <label
+                class="knowledge-relation-dialog__col-item"
+                [class.knowledge-relation-dialog__col-item--disabled]="wholeTable()"
+                [class.knowledge-relation-dialog__col-item--checked]="isColumnChecked(column.name)"
+              >
+                <input
+                  type="checkbox"
+                  class="knowledge-relation-dialog__col-input"
+                  [checked]="isColumnChecked(column.name)"
+                  [disabled]="wholeTable()"
+                  (change)="toggleColumn(column.name, $any($event.target).checked)"
+                />
+                <span class="knowledge-relation-dialog__col-body">
+                  <span class="knowledge-relation-dialog__col-name" [appTruncateTooltip]="column.name">{{
+                    column.name
+                  }}</span>
+                  @if (column.comment) {
+                    <span
+                      class="knowledge-relation-dialog__col-comment"
+                      [appTruncateTooltip]="column.comment"
+                      >{{ column.comment }}</span
+                    >
+                  }
+                  @if (column.dtype) {
+                    <span class="knowledge-relation-dialog__col-dtype">{{ column.dtype }}</span>
+                  }
+                </span>
+              </label>
+            }
+          </div>
+        }
+      }
+    </section>
+  </div>
+
+  <footer class="knowledge-relation-dialog__footer">
+    <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancel()">取消</button>
+    <button
+      type="button"
+      class="entity-form__btn entity-form__btn--primary"
+      [disabled]="!canSubmit()"
+      (click)="confirm()"
+    >
+      {{ submitLabel }}
+    </button>
+  </footer>
+</div>

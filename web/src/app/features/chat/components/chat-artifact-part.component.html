@@ -1,0 +1,18 @@
+<div class="chat-part chat-part--artifact" [class.chat-part--thinking]="isThinking()">
+  @if (part().title) {
+    <div class="chat-part__artifact-head">
+      <mat-icon>{{ isThinking() ? 'psychology' : 'code' }}</mat-icon>
+      <span>{{ part().title }}</span>
+      @if (!isThinking()) {
+        <span class="chat-part__artifact-lang">{{ part().language }}</span>
+      }
+    </div>
+  }
+  @if (isSql()) {
+    <app-sql-highlight [code]="part().content" [embedded]="true" />
+  } @else if (isMarkdown()) {
+    <app-chat-markdown [content]="part().content" />
+  } @else {
+    <pre class="chat-part__artifact-code"><code>{{ part().content }}</code></pre>
+  }
+</div>

@@ -1,0 +1,316 @@
+<div class="workbench">
+  <header class="workbench__header">
+    <h1 class="workbench__title">导入任务</h1>
+    <p class="workbench__hint">上传 Excel 并查看导入进度与历史记录</p>
+    <button
+      type="button"
+      class="app-btn workbench__header-action"
+      [disabled]="refreshing()"
+      (click)="refresh()"
+    >
+      <mat-icon [class.is-spinning]="refreshing()">refresh</mat-icon>
+      刷新
+    </button>
+  </header>
+
+  <div class="workbench__body workbench__body--2col">
+    <section class="workbench__pane">
+      <div class="workbench__pane-head">
+        <div class="workbench__pane-toolbar">
+          <label class="app-search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              [ngModel]="query()"
+              (ngModelChange)="onQueryChange($event)"
+              placeholder="搜索任务、文件名"
+              autocomplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            class="app-btn app-btn--icon app-btn--accent"
+            aria-label="新建导入"
+            (click)="showNewUpload()"
+          >
+            <mat-icon>add</mat-icon>
+          </button>
+        </div>
+        <div class="workbench__pane-meta">共 {{ jobs().length }} 条</div>
+      </div>
+
+      <div class="workbench__pane-list">
+        @if (loading() && jobs().length === 0) {
+          <div class="workbench__pane-loading">
+            <mat-spinner diameter="28" />
+          </div>
+        } @else if (filteredJobs().length === 0) {
+          <app-empty-state
+            icon="history"
+            title="暂无导入任务"
+            [description]="query() ? '搜索无匹配结果' : '在右侧上传 Excel 开始导入'"
+          />
+        } @else {
+          @for (job of filteredJobs(); track job.job_id) {
+            <button
+              type="button"
+              class="workbench__item"
+              [class.workbench__item--active]="selected()?.job_id === job.job_id"
+              (click)="selectJob(job)"
+            >
+              <div class="workbench__item-row">
+                <span class="workbench__item-name" [appTruncateTooltip]="job.label">{{
+                  job.label
+                }}</span>
+                <span class="ingest-status" [class]="statusClass(job.status)">{{
+                  jobStatusLabel(job.status)
+                }}</span>
+              </div>
+              <div class="workbench__item-meta" [appTruncateTooltip]="job.filename">{{
+                job.filename
+              }}</div>
+              @if (job.status === 'Running' || job.status === 'Pending') {
+                <div
+                  class="ingest-progress ingest-item-progress"
+                  role="progressbar"
+                  [attr.aria-valuenow]="job.percent"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                >
+                  <div class="ingest-progress__bar" [style.width.%]="job.percent"></div>
+                </div>
+              }
+            </button>
+          }
+        }
+      </div>
+    </section>
+
+    <section class="workbench__detail">
+      <div class="workbench__detail-scroll">
+        @if (detailPanel() === 'upload') {
+        <article class="detail-card ingest-upload-card">
+          <header class="detail-card__header ingest-upload-card__header">
+            <div class="detail-card__identity">
+              <span class="detail-card__badge ingest-upload-card__badge">新建</span>
+              <h2 class="detail-card__title">上传 Excel</h2>
+              <p class="detail-card__subtitle">选择导入类型并上传 .xlsx / .xls 文件</p>
+            </div>
+          </header>
+
+          <div class="ingest-upload-card__body">
+            <div class="entity-form__group">
+              <span class="entity-form__label" id="ingest-stage-label">导入类型</span>
+              <div class="ingest-stage-grid" role="radiogroup" aria-labelledby="ingest-stage-label">
+                @for (option of stageOptions; track option.value) {
+                  <button
+                    type="button"
+                    class="ingest-stage-option"
+                    [class.ingest-stage-option--active]="uploadStage() === option.value"
+                    role="radio"
+                    [attr.aria-checked]="uploadStage() === option.value"
+                    (click)="onStageChange(option.value)"
+                  >
+                    <mat-icon class="ingest-stage-option__icon" aria-hidden="true">{{
+                      option.icon
+                    }}</mat-icon>
+                    <span class="ingest-stage-option__text">
+                      <span class="ingest-stage-option__label">{{ option.label }}</span>
+                      <span class="ingest-stage-option__hint">{{ option.hint }}</span>
+                    </span>
+                  </button>
+                }
+              </div>
+            </div>
+
+            <div
+              class="ingest-dropzone"
+              [class.ingest-dropzone--active]="uploadDragOver()"
+              (dragover)="onDragOver($event)"
+              (dragleave)="onDragLeave($event)"
+              (drop)="onDrop($event)"
+            >
+              <mat-icon class="ingest-dropzone__icon">cloud_upload</mat-icon>
+              <p class="ingest-dropzone__title">拖拽文件到此处，或点击选择</p>
+              <p class="ingest-dropzone__hint">支持 .xlsx、.xls</p>
+              <label class="app-btn app-btn--accent ingest-dropzone__pick">
+                <mat-icon>folder_open</mat-icon>
+                选择文件
+                <input
+                  type="file"
+                  class="ingest-dropzone__input"
+                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                  (change)="onFileInputChange($event)"
+                />
+              </label>
+            </div>
+
+            @if (uploadFile(); as file) {
+              <div class="ingest-file-chip">
+                <mat-icon>description</mat-icon>
+                <span class="ingest-file-chip__name" [appTruncateTooltip]="file.name">{{
+                  file.name
+                }}</span>
+                <span class="ingest-file-chip__size">{{ formatFileSize(file.size) }}</span>
+                <button
+                  type="button"
+                  class="app-btn app-btn--xs"
+                  aria-label="移除文件"
+                  (click)="clearUploadFile()"
+                >
+                  <mat-icon>close</mat-icon>
+                </button>
+              </div>
+            }
+
+            <div class="ingest-upload-card__actions">
+              <button
+                type="button"
+                class="entity-form__btn entity-form__btn--primary"
+                [disabled]="uploading() || !uploadFile()"
+                (click)="submitUpload()"
+              >
+                {{ uploading() ? '提交中…' : '开始导入' }}
+              </button>
+            </div>
+          </div>
+        </article>
+        }
+
+        @if (detailPanel() === 'job' && selected(); as job) {
+          <article class="detail-card">
+            <header class="detail-card__header">
+              <div class="detail-card__identity">
+                <span class="detail-card__badge detail-card__badge--table">任务</span>
+                <div class="detail-card__title-row">
+                  <h2 class="detail-card__title" [appTruncateTooltip]="job.label">{{ job.label }}</h2>
+                  <span class="ingest-status" [class]="statusClass(job.status)">{{
+                    jobStatusLabel(job.status)
+                  }}</span>
+                </div>
+                <p class="detail-card__subtitle" [appTruncateTooltip]="job.filename">{{ job.filename }}</p>
+                @if (selectedJobReadonly()) {
+                  <p class="ingest-readonly-note">
+                    <mat-icon aria-hidden="true">info</mat-icon>
+                    {{ selectedJobReadonlyHint() }}
+                  </p>
+                }
+              </div>
+              <div class="detail-card__toolbar">
+                <button type="button" class="app-btn app-btn--accent" (click)="showNewUpload()">
+                  <mat-icon>add</mat-icon>
+                  新建导入
+                </button>
+              </div>
+            </header>
+
+            @if (detailLoading()) {
+              <div class="ingest-detail-loading">
+                <mat-spinner diameter="24" />
+              </div>
+            } @else {
+              <dl class="detail-metrics detail-metrics--2">
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">进度</dt>
+                  <dd class="detail-metrics__value">{{ job.percent | number: '1.0-1' }}%</dd>
+                </div>
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">类型</dt>
+                  <dd class="detail-metrics__value ingest-detail-metrics__type">{{ job.type }}</dd>
+                </div>
+              </dl>
+
+              @if (job.status === 'Running' || job.status === 'Pending' || job.percent > 0) {
+                <div class="ingest-detail-progress">
+                  <div
+                    class="ingest-progress ingest-progress--detail"
+                    role="progressbar"
+                    [attr.aria-valuenow]="job.percent"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  >
+                    <div class="ingest-progress__bar" [style.width.%]="job.percent"></div>
+                  </div>
+                  @if (job.message) {
+                    <p class="ingest-detail-progress__message">{{ job.message }}</p>
+                  }
+                </div>
+              }
+
+              @if (progressLevels().length > 0) {
+                <section class="detail-card__section">
+                  <div class="detail-card__section-head">
+                    <h3 class="detail-card__section-title">分层进度</h3>
+                  </div>
+                  <ul class="ingest-levels">
+                    @for (level of progressLevels(); track level.entity + level.name) {
+                      <li class="ingest-level">
+                        <div class="ingest-level__head">
+                          <span class="ingest-level__entity">{{ progressEntityLabel(level.entity) }}</span>
+                          @if (level.name) {
+                            <span class="ingest-level__name" [appTruncateTooltip]="level.name">{{
+                              level.name
+                            }}</span>
+                          }
+                          <span class="ingest-level__count"
+                            >{{ level.current }} / {{ level.total }}</span
+                          >
+                        </div>
+                        @if (level.total > 0) {
+                          <div
+                            class="ingest-progress ingest-progress--level ingest-level__bar"
+                            role="progressbar"
+                            [attr.aria-valuenow]="(level.current / level.total) * 100"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                          >
+                            <div
+                              class="ingest-progress__bar"
+                              [style.width.%]="(level.current / level.total) * 100"
+                            ></div>
+                          </div>
+                        }
+                      </li>
+                    }
+                  </ul>
+                </section>
+              }
+
+              <section class="detail-card__section ingest-detail-meta">
+                <dl class="ingest-meta-list">
+                  <div class="ingest-meta-list__row">
+                    <dt>创建时间</dt>
+                    <dd>{{ job.created_at | date: 'yyyy-MM-dd HH:mm:ss' }}</dd>
+                  </div>
+                  <div class="ingest-meta-list__row">
+                    <dt>更新时间</dt>
+                    <dd>{{ job.updated_at | date: 'yyyy-MM-dd HH:mm:ss' }}</dd>
+                  </div>
+                  @if (job.finished_at) {
+                    <div class="ingest-meta-list__row">
+                      <dt>完成时间</dt>
+                      <dd>{{ job.finished_at | date: 'yyyy-MM-dd HH:mm:ss' }}</dd>
+                    </div>
+                  }
+                  @if (job.message && job.status !== 'Running') {
+                    <div class="ingest-meta-list__row">
+                      <dt>说明</dt>
+                      <dd>{{ job.message }}</dd>
+                    </div>
+                  }
+                  @if (job.error) {
+                    <div class="ingest-meta-list__row ingest-meta-list__row--error">
+                      <dt>错误</dt>
+                      <dd>{{ job.error }}</dd>
+                    </div>
+                  }
+                </dl>
+              </section>
+            }
+          </article>
+        }
+      </div>
+    </section>
+  </div>
+</div>

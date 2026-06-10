@@ -1,0 +1,90 @@
+.sql-highlight {
+  display: block;
+}
+
+.sql-highlight--embedded .sql-highlight__pre {
+  padding: 0.75rem;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.sql-highlight__pre {
+  margin: 0;
+  padding: 0.875rem 1rem;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.sql-highlight__pre code {
+  display: block;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.sql-highlight .token.comment,
+.sql-highlight .token.prolog,
+.sql-highlight .token.doctype,
+.sql-highlight .token.cdata {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.sql-highlight .token.punctuation {
+  color: #64748b;
+}
+
+.sql-highlight .token.property,
+.sql-highlight .token.tag,
+.sql-highlight .token.boolean,
+.sql-highlight .token.number,
+.sql-highlight .token.constant,
+.sql-highlight .token.symbol,
+.sql-highlight .token.deleted {
+  color: #b45309;
+}
+
+.sql-highlight .token.selector,
+.sql-highlight .token.attr-name,
+.sql-highlight .token.string,
+.sql-highlight .token.char,
+.sql-highlight .token.builtin,
+.sql-highlight .token.inserted {
+  color: #059669;
+}
+
+.sql-highlight .token.operator,
+.sql-highlight .token.entity,
+.sql-highlight .token.url,
+.sql-highlight .language-css .token.string,
+.sql-highlight .style .token.string {
+  color: #0284c7;
+}
+
+.sql-highlight .token.atrule,
+.sql-highlight .token.attr-value,
+.sql-highlight .token.keyword {
+  color: #7c3aed;
+}
+
+.sql-highlight .token.function,
+.sql-highlight .token.class-name {
+  color: #db2777;
+}
+
+.sql-highlight .token.regex,
+.sql-highlight .token.important,
+.sql-highlight .token.variable {
+  color: #ca8a04;
+}

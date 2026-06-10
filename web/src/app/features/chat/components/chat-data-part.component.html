@@ -1,0 +1,132 @@
+<div class="chat-part chat-part--data">
+  @if (part().title && !isCompactPlan() && genericKind() !== 'sql_result') {
+    <div class="chat-part__data-title">{{ part().title }}</div>
+  }
+  @if (part().schema === 'table_list' && rows().length) {
+    <div class="chat-part__table-wrap">
+      <table class="chat-part__table">
+        <thead>
+          <tr>
+            <th>表名</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.name) {
+            <tr>
+              <td class="font-mono">{{ row.name }}</td>
+              <td>{{ row.comment || row.description || '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'schema_plan') {
+    <div class="chat-part__plan-card">
+      <div class="chat-part__plan-head">
+        <div class="chat-part__plan-title">选表结果</div>
+        <div class="chat-part__plan-meta">
+          @if (selectedTables().length) {
+            已选 {{ selectedTables().length }} 张表
+          } @else {
+            未选表
+          }
+        </div>
+      </div>
+      <div class="chat-part__plan-content">
+        @if (selectedTables().length) {
+          <div class="chat-part__plan-tables" aria-label="已选数据表">
+            @for (table of selectedTables(); track table) {
+              <span class="chat-part__plan-tag font-mono">{{ table }}</span>
+            }
+          </div>
+        } @else {
+          <p class="chat-part__plan-empty">本次未匹配到需要查询的数据表。</p>
+        }
+        @if (text('reasoning')) {
+          <p class="chat-part__plan-reason">{{ text('reasoning') }}</p>
+        }
+      </div>
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'sql_diagnostic') {
+    <div
+      class="chat-part__data-summary chat-part__data-summary--diagnostic"
+      [class.chat-part__data-summary--diagnostic-repair]="isRepairDiagnostic()"
+    >
+      @if (isRepairDiagnostic()) {
+        <p class="chat-part__diag-title">SQL 校验未通过</p>
+        <p>已根据错误信息重新生成 SQL，请稍候查看更新后的查询说明与语句。</p>
+      } @else {
+        <p class="chat-part__diag-title">查询未完成</p>
+        <p>系统已尝试修复，但当前查询仍未能成功执行。</p>
+      }
+      @if (values('errors').length) {
+        <ul class="chat-part__data-list">
+          @for (item of values('errors'); track item) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+      @if (retryCount() > 0) {
+        <p class="chat-part__diag-meta">已尝试 {{ retryCount() }} 次修复</p>
+      }
+      @if (text('checked_sql')) {
+        <details>
+          <summary>查看失败 SQL</summary>
+          <pre class="chat-part__tool-block"><code>{{ text('checked_sql') }}</code></pre>
+        </details>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'sql_result') {
+    <div class="chat-part__result">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">查询结果</div>
+        <div class="chat-part__result-meta">
+          {{ sqlResultSets().length }} 个结果集 / {{ sqlResultRowCount() }} 行
+        </div>
+      </div>
+
+      @if (!sqlResultSets().length) {
+        <div class="chat-part__empty-result">
+          {{ sqlResultMessage() || '查询已执行，但没有可展示的数据行。' }}
+        </div>
+      }
+
+      @for (result of sqlResultSets(); track $index) {
+        <div class="chat-part__result-table">
+          <div class="chat-part__table-wrap">
+            <table class="chat-part__table chat-part__table--result">
+              <thead>
+                <tr>
+                  @for (col of result.columns; track col) {
+                    <th>{{ col }}</th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @if (!result.rows.length) {
+                  <tr>
+                    <td [attr.colspan]="result.columns.length || 1">（无数据）</td>
+                  </tr>
+                } @else {
+                  @for (row of result.rows; track $index) {
+                    <tr>
+                      @for (col of result.columns; track col) {
+                        <td>{{ row[col] || '' }}</td>
+                      }
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+    </div>
+  } @else {
+    <pre class="chat-part__tool-block"><code>{{ part().payload | json }}</code></pre>
+  }
+  @if (part().truncated) {
+    <p class="chat-part__truncated">结果已截断</p>
+  }
+</div>

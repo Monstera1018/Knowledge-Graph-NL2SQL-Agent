@@ -1,0 +1,147 @@
+<div class="entity-form__group catalog-joins-form">
+  <button type="button" class="app-btn app-btn--accent catalog-joins-form__add" (click)="onAddRelation()">
+    <mat-icon>add</mat-icon>
+    添加关联表
+  </button>
+
+  @if (joinRelations().length === 0) {
+    <div class="detail-placeholder">可选：与其它表建立主从关联及关联条件</div>
+  }
+
+  @for (relation of joinRelations(); track relation.id) {
+    <div class="catalog-join-form-card">
+      <div class="catalog-join-form-card__row">
+        <span class="entity-form__label catalog-join-form-card__label">关联表</span>
+        <span class="entity-form__label catalog-join-form-card__label catalog-join-form-card__label--direction"
+          >方向</span
+        >
+        <span class="catalog-join-form-card__label-spacer" aria-hidden="true"></span>
+
+        <div
+          class="catalog-peer-picker"
+          [class.catalog-peer-picker--open]="openPeerPickerId() === relation.id"
+        >
+          <button
+            type="button"
+            class="catalog-peer-picker__trigger"
+            (click)="togglePeerPicker($event, relation.id)"
+          >
+            @if (relation.peer_table_name) {
+              <span
+                class="catalog-peer-picker__value"
+                [appTruncateTooltip]="optionLabelByName(relation.peer_table_name)"
+              >
+                <span class="catalog-peer-picker__name">{{ relation.peer_table_name }}</span>
+                @if (commentForName(relation.peer_table_name); as comment) {
+                  <span class="catalog-peer-picker__comment"> — {{ comment }}</span>
+                }
+              </span>
+            } @else {
+              <span class="catalog-peer-picker__placeholder">选择关联表</span>
+            }
+            <mat-icon class="catalog-peer-picker__chevron" aria-hidden="true">expand_more</mat-icon>
+          </button>
+        </div>
+
+        <div class="catalog-direction-switch" role="radiogroup" aria-label="关联方向">
+          <button
+            type="button"
+            class="catalog-direction-switch__btn"
+            role="radio"
+            matTooltip="当前表 → 关联表"
+            matTooltipPosition="above"
+            matTooltipClass="app-tooltip"
+            matTooltipShowDelay="400"
+            [attr.aria-checked]="relation.direction === 'outgoing'"
+            [class.catalog-direction-switch__btn--active]="relation.direction === 'outgoing'"
+            (click)="$event.stopPropagation(); onPatch(relation.id, { direction: 'outgoing' })"
+          >
+            主表
+          </button>
+          <button
+            type="button"
+            class="catalog-direction-switch__btn"
+            role="radio"
+            matTooltip="关联表 → 当前表"
+            matTooltipPosition="above"
+            matTooltipClass="app-tooltip"
+            matTooltipShowDelay="400"
+            [attr.aria-checked]="relation.direction === 'incoming'"
+            [class.catalog-direction-switch__btn--active]="relation.direction === 'incoming'"
+            (click)="$event.stopPropagation(); onPatch(relation.id, { direction: 'incoming' })"
+          >
+            从表
+          </button>
+        </div>
+
+        <button
+          type="button"
+          class="app-btn app-btn--icon app-btn--danger catalog-join-form-card__remove"
+          aria-label="删除关联"
+          matTooltip="删除此关联"
+          matTooltipPosition="above"
+          matTooltipClass="app-tooltip"
+          matTooltipShowDelay="400"
+          (click)="removeRelation.emit(relation.id)"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      @if (openPeerPickerId() === relation.id) {
+        <div class="catalog-peer-picker__panel" (click)="$event.stopPropagation()">
+          <label class="app-search catalog-peer-picker__search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              placeholder="搜索表名或注释"
+              autocomplete="off"
+              [ngModel]="peerPickerQuery()"
+              (ngModelChange)="peerPickerQuery.set($event)"
+              (click)="$event.stopPropagation()"
+            />
+          </label>
+          <ul class="catalog-peer-picker__list">
+            @if (filteredPeerTables().length === 0) {
+              <li class="catalog-peer-picker__empty">无匹配表</li>
+            } @else {
+              @for (table of filteredPeerTables(); track table.uuid) {
+                <li>
+                  <button
+                    type="button"
+                    class="catalog-peer-picker__item"
+                    [class.catalog-peer-picker__item--active]="relation.peer_table_name === table.name"
+                    (click)="selectPeerTable(relation.id, table.name)"
+                  >
+                    <span class="catalog-peer-picker__item-line" [appTruncateTooltip]="optionLabel(table)">
+                      <span class="catalog-peer-picker__name">{{ table.name }}</span>
+                      @if (table.comment || table.description) {
+                        <span class="catalog-peer-picker__comment">
+                          — {{ table.comment || table.description }}
+                        </span>
+                      }
+                    </span>
+                  </button>
+                </li>
+              }
+            }
+          </ul>
+        </div>
+      }
+
+      <div class="entity-form__group catalog-join-form-card__condition">
+        <label class="entity-form__label" [for]="'join-condition-' + relation.id">关联条件</label>
+        <textarea
+          [id]="'join-condition-' + relation.id"
+          class="entity-form__textarea entity-form__textarea--compact"
+          rows="2"
+          placeholder="例如 a.id = b.order_id"
+          [ngModel]="relation.condition"
+          (ngModelChange)="onPatch(relation.id, { condition: $event })"
+          [name]="'joinCondition' + relation.id"
+        ></textarea>
+      </div>
+    </div>
+  }
+</div>
