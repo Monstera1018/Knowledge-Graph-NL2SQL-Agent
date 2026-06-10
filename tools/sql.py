@@ -186,6 +186,27 @@ def _column_reference_label(column: Column) -> str:
     return name
 
 
+def _is_timestampdiff_unit_arg(column: Column) -> bool:
+    """Skip TIMESTAMPDIFF unit tokens parsed as columns, e.g. day/hour."""
+    parent = getattr(column, "parent", None)
+    if not isinstance(parent, exp.TimestampDiff):
+        return False
+    unit_arg = parent.args.get("this")
+    if unit_arg is not column:
+        return False
+    return (column.name or "").strip().lower() in {
+        "microsecond",
+        "second",
+        "minute",
+        "hour",
+        "day",
+        "week",
+        "month",
+        "quarter",
+        "year",
+    }
+
+
 def _cte_scope_select_expr(scope: Scope):
     """Return the first SELECT-level expression list from a CTE/subquery Scope.
 
@@ -361,6 +382,8 @@ def _gather_source_info(
     for scope in traverse_scope(analysis_sql):
         _register_physical_tables_from_scope(scope, source_info, ephemeral_names)
         for column in scope.columns:
+            if _is_timestampdiff_unit_arg(column):
+                continue
             label = _column_reference_label(column)
             if not label or label in seen_refs:
                 continue
