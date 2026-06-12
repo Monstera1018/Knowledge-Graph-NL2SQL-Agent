@@ -26,18 +26,21 @@
       <div class="chat-part__plan-head">
         <div class="chat-part__plan-title">选表结果</div>
         <div class="chat-part__plan-meta">
-          @if (selectedTables().length) {
-            已选 {{ selectedTables().length }} 张表
+          @if (selectedTableDetails().length) {
+            已选 {{ selectedTableDetails().length }} 张表
           } @else {
             未选表
           }
         </div>
       </div>
       <div class="chat-part__plan-content">
-        @if (selectedTables().length) {
+        @if (selectedTableDetails().length) {
           <div class="chat-part__plan-tables" aria-label="已选数据表">
-            @for (table of selectedTables(); track table) {
-              <span class="chat-part__plan-tag font-mono">{{ table }}</span>
+            @for (table of selectedTableDetails(); track table.name) {
+              <div class="chat-part__plan-table">
+                <div class="chat-part__plan-table-name">{{ table.comment || table.description || '未命名数据表' }}</div>
+                <div class="chat-part__plan-table-code font-mono">{{ table.name }}</div>
+              </div>
             }
           </div>
         } @else {

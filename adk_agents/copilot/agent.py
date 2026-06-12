@@ -27,6 +27,7 @@ from adk_agents.copilot.helpers import (
     MAX_SQL_GENERATION_ATTEMPTS,
     SQL_GENERATION_ATTEMPT_STATE_KEY,
     SQL_SCHEMA_CONTEXT_STATE_KEY,
+    SQL_SELECTED_TABLE_DETAILS_STATE_KEY,
     SQL_LAST_ATTEMPT_STATE_KEY,
     SQL_VALIDATED_SQL_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
@@ -52,11 +53,78 @@ from adk_agents.copilot.prompts import (
 )
 from adk_agents.extractor.agent import root_agent as extractor
 from tools.db import execute_read_sql, get_sql_read_dialect, lookup_distinct_column_values
-from tools.retrieval import build_sql_schema_context, search_and_build_llm_context
+from tools.retrieval import (
+    build_sql_schema_context,
+    load_selected_tables_bundle,
+    search_and_build_llm_context,
+)
 from tools.sql import extract_sql_statements_from_text, validate_read_sql
 from tools.common import to_litellm_model_name, require_non_empty_env
 
 SQL_DIALECT = get_sql_read_dialect()
+TABLE_CANDIDATE_MAP_STATE_KEY = "table_candidate_map"
+
+_TABLE_HEADING_RE = re.compile(
+    r"(?m)^-\s+\*\*([A-Za-z0-9_][A-Za-z0-9_.$]*)\*\*"
+)
+_JSON_OBJECT_RE = re.compile(r"\{.*?\}", re.DOTALL)
+
+
+def _extract_table_candidates(retrieval_context: str) -> list[str]:
+    """Extract table names from formatted retrieval context in display order."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in _TABLE_HEADING_RE.finditer(retrieval_context or ""):
+        name = match.group(1).strip()
+        key = name.lower()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def _table_candidate_map(table_candidates: list[str]) -> dict[str, str]:
+    return {
+        f"T{index}": table_name
+        for index, table_name in enumerate(table_candidates, start=1)
+    }
+
+
+def _parse_json_objects(text: str) -> list[dict]:
+    """Parse one or more JSON objects from model text, keeping valid objects only."""
+    cleaned = (text or "").strip()
+    if "```" in cleaned:
+        cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip().rstrip("`").strip()
+
+    decoder = json.JSONDecoder()
+    objects: list[dict] = []
+    cursor = 0
+    while cursor < len(cleaned):
+        start = cleaned.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(cleaned[start:])
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+        cursor = start + end
+
+    if objects:
+        return objects
+
+    # Fallback for text with small amounts of noise inside/around a single JSON object.
+    for match in _JSON_OBJECT_RE.finditer(cleaned):
+        try:
+            value = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
 
 
 def prepare_extractor_input(ctx: Context, node_input: str) -> str:
@@ -132,6 +200,8 @@ async def search(
         workspace_id=workspace_id,
         limit=10,
     )
+    table_candidates = _extract_table_candidates(retrieval_context)
+    ctx.state[TABLE_CANDIDATE_MAP_STATE_KEY] = _table_candidate_map(table_candidates)
 
     user_message = node_input.retrieval_query
     save_user_message_to_state(ctx, user_message)
@@ -139,6 +209,7 @@ async def search(
     return SearchStageOutput(
         user_message=user_message,
         retrieval_context=retrieval_context,
+        table_candidates=table_candidates,
     )
 
 
@@ -164,21 +235,36 @@ def parse_table_selection(ctx: Context, node_input) -> TableSelectionResult:
     raw = text_from_node_input(node_input)
     cleaned = (raw or "").strip()
 
-    # Strip optional Markdown fences (``` or ```json)
-    if "```" in cleaned:
-        cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip().rstrip("`").strip()
-
     tables: list[str] = []
     reason = ""
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
+    candidate_map = {
+        str(key).strip().upper(): str(value).strip()
+        for key, value in (ctx.state.get(TABLE_CANDIDATE_MAP_STATE_KEY) or {}).items()
+        if str(key).strip() and str(value).strip()
+    }
+    candidate_names = {name.lower(): name for name in candidate_map.values()}
+
+    parsed_objects = _parse_json_objects(cleaned)
+    data = parsed_objects[-1] if parsed_objects else {}
+    if isinstance(data, dict):
+        raw_table_ids = data.get("table_ids", [])
+        if isinstance(raw_table_ids, list):
+            for table_id in raw_table_ids:
+                table_name = candidate_map.get(str(table_id).strip().upper())
+                if table_name and table_name not in tables:
+                    tables.append(table_name)
+
+        # Backward-compatible exact-match fallback.  It still refuses invented
+        # or typoed table names because only names present in candidate_map pass.
+        if not tables:
             raw_tables = data.get("tables", [])
             if isinstance(raw_tables, list):
-                tables = [str(t).strip() for t in raw_tables if str(t).strip()]
-            reason = str(data.get("reason", "")).strip()
-    except (json.JSONDecodeError, ValueError):
-        pass
+                for raw_table in raw_tables:
+                    table_name = candidate_names.get(str(raw_table).strip().lower())
+                    if table_name and table_name not in tables:
+                        tables.append(table_name)
+
+        reason = str(data.get("reason", "")).strip()
 
     result = TableSelectionResult(tables=tables, reason=reason)
     # Keep state in sync so selected_table_names_from_state() still works
@@ -192,6 +278,22 @@ async def load_sql_schema_context(
 ) -> str:
     """Load full graph metadata for candidate tables and format for SQL generation."""
     workspace_id = resolve_workspace_id(ctx)
+    bundle = await load_selected_tables_bundle(workspace_id, node_input.tables)
+    detail_by_name = {
+        table.name.lower(): {
+            "name": table.name,
+            "comment": table.comment,
+            "description": table.description,
+        }
+        for table in bundle.tables
+    }
+    ctx.state[SQL_SELECTED_TABLE_DETAILS_STATE_KEY] = [
+        detail_by_name.get(
+            table_name.lower(),
+            {"name": table_name, "comment": "", "description": ""},
+        )
+        for table_name in node_input.tables
+    ]
     schema_text = await build_sql_schema_context(
         workspace_id=workspace_id,
         table_names=node_input.tables,

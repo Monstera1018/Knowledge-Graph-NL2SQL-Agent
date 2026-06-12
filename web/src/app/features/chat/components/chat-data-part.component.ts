@@ -3,6 +3,12 @@ import { Component, input } from '@angular/core';
 
 import type { DataPart } from '../../../core/models/chat.models';
 
+type SelectedTableDetail = {
+  name: string;
+  comment?: string;
+  description?: string;
+};
+
 @Component({
   selector: 'app-chat-data-part',
   imports: [JsonPipe],
@@ -75,6 +81,35 @@ export class ChatDataPartComponent {
       return direct;
     }
     return this.values('tables');
+  }
+
+  protected selectedTableDetails(): SelectedTableDetail[] {
+    const details = this.part().payload['selected_table_details'];
+    if (Array.isArray(details)) {
+      const normalized = details
+        .map((item): SelectedTableDetail | null => {
+          if (!item || typeof item !== 'object') {
+            return null;
+          }
+          const record = item as Record<string, unknown>;
+          const name = record['name'];
+          if (typeof name !== 'string' || !name.trim()) {
+            return null;
+          }
+          const comment = record['comment'];
+          const description = record['description'];
+          return {
+            name,
+            comment: typeof comment === 'string' ? comment : '',
+            description: typeof description === 'string' ? description : '',
+          };
+        })
+        .filter((item): item is SelectedTableDetail => !!item);
+      if (normalized.length) {
+        return normalized;
+      }
+    }
+    return this.selectedTables().map((name) => ({ name }));
   }
 
   protected selectedColumns(): string[] {

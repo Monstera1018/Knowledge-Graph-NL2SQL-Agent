@@ -668,6 +668,31 @@ async def _verify_sources_in_workspace_graph(
     return errors
 
 
+def _verify_sources_in_candidate_tables(
+        sources: Dict[str, List[str]],
+        candidate_table_names: Sequence[str] | None = None,
+) -> List[str]:
+    if not candidate_table_names:
+        return []
+
+    allowed = {
+        name.strip().lower()
+        for name in candidate_table_names
+        if (name or "").strip()
+    }
+    if not allowed:
+        return []
+
+    errors: List[str] = []
+    for table_name in sources:
+        if table_name.strip().lower() not in allowed:
+            allowed_text = "、".join(candidate_table_names)
+            errors.append(
+                f"SQL 引用了未选中的表：{table_name}；本轮只能使用已选表：{allowed_text}"
+            )
+    return errors
+
+
 async def validate_read_sql(
         stmt: str,
         dialect: str = "mysql",
@@ -691,6 +716,7 @@ async def validate_read_sql(
         return False, source_errors, ";\n\n".join(statements)
 
     assert sources is not None
+    errors.extend(_verify_sources_in_candidate_tables(sources, candidate_table_names))
     errors.extend(await _verify_sources_in_database(sources))
 
     workspace = (workspace_id or "").strip()

@@ -60,6 +60,10 @@ class RetrievalExtractionResult(BaseModel):
 class SearchStageOutput(BaseModel):
     user_message: str = Field(description="用户原始问题")
     retrieval_context: str = Field(description="语义检索上下文 Markdown")
+    table_candidates: List[str] = Field(
+        default_factory=list,
+        description="从检索上下文中确定性提取出的候选表名，按出现顺序排列",
+    )
 
 
 class TableSelectionResult(BaseModel):

@@ -315,6 +315,14 @@ Embedding 接口：EMBEDDING_MODEL_NAME / EMBEDDING_API_BASE / EMBEDDING_API_KEY
 uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+如果只是为了本地验证、配置变更后重启，或者在 Windows 后台进程中启动，推荐使用不带 `--reload` 的命令，避免 `watchfiles` reloader 残留旧进程：
+
+```powershell
+uvicorn server.app:app --host 127.0.0.1 --port 8000
+```
+
+修改 `.env` 后必须重启后端服务，新的大模型、Embedding、数据库、Milvus、Neo4j 等连接配置才会重新加载。
+
 后端地址：
 
 ```text
@@ -324,7 +332,7 @@ http://127.0.0.1:8000
 健康检查：
 
 ```text
-GET http://127.0.0.1:8000/api/health
+GET http://127.0.0.1:8000/health
 ```
 
 ### 3. 智能体启动方式
@@ -359,6 +367,13 @@ cd web
 npm start
 ```
 
+如果 PowerShell 提示 `npm.ps1` 被执行策略禁止，可以改用：
+
+```powershell
+cd web
+npm.cmd start
+```
+
 前端访问：
 
 ```text
@@ -379,8 +394,10 @@ http://localhost:4200
 3. 确认业务数据库可连接
 4. 确认 .env 中大模型和 embedding 接口配置正确
 5. 如数据有变化，先执行 python scripts/init.py 初始化 Neo4j 和 Milvus
-6. 启动后端：uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
+6. 启动后端：uvicorn server.app:app --host 127.0.0.1 --port 8000
+   开发热更新可改用：uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
 7. 启动前端：cd web && npm start
+   如 PowerShell 拦截 npm.ps1，使用：cd web && npm.cmd start
 8. 打开 http://localhost:4200 登录使用
 ```
 
@@ -445,6 +462,12 @@ default
 uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+配置变更后重启、后台运行或 Windows 环境推荐：
+
+```powershell
+uvicorn server.app:app --host 127.0.0.1 --port 8000
+```
+
 初始化 Neo4j / Milvus：
 
 ```powershell
@@ -456,6 +479,13 @@ python scripts\init.py
 ```powershell
 cd web
 npm start
+```
+
+PowerShell 执行策略拦截 `npm.ps1` 时：
+
+```powershell
+cd web
+npm.cmd start
 ```
 
 前端构建：

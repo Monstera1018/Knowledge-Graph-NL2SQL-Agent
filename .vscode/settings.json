@@ -1,0 +1,12 @@
+{
+    "sqltools.connections": [
+        {
+            "previewLimit": 50,
+            "driver": "SQLite",
+            "name": "审计营销电费电价数据",
+            "group": "审计营销电费电价数据",
+            "database": "${workspaceFolder:TYWS}/data/dev.sqlite"
+        }
+    ],
+    "sqltools.useNodeRuntime": true
+}

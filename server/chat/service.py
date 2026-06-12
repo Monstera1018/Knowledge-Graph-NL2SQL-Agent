@@ -198,7 +198,11 @@ def _output_to_dict(output: Any) -> dict[str, Any] | None:
 def _is_table_selection_result(value: dict[str, Any] | None) -> bool:
     if not isinstance(value, dict):
         return False
-    return "tables" in value or "reason" in value
+    tables = value.get("tables")
+    selected_tables = value.get("selected_tables")
+    if isinstance(tables, list) and len(tables) > 0:
+        return True
+    return isinstance(selected_tables, list) and len(selected_tables) > 0
 
 
 def _table_selection_from_event(event: Any, *, stage_text: str = "") -> dict[str, Any] | None:
@@ -213,11 +217,67 @@ def _table_selection_from_event(event: Any, *, stage_text: str = "") -> dict[str
 
 def _schema_plan_payload(selection: dict[str, Any]) -> dict[str, Any]:
     tables = selection.get("tables")
+    if not isinstance(tables, list):
+        tables = selection.get("selected_tables")
+    table_details = selection.get("table_details")
     reason = selection.get("reason")
+    if not isinstance(reason, str):
+        reason = selection.get("reasoning")
     return {
         "kind": "schema_plan",
         "selected_tables": tables if isinstance(tables, list) else [],
+        "selected_table_details": table_details if isinstance(table_details, list) else [],
         "reasoning": reason if isinstance(reason, str) else "",
+    }
+
+
+def _extract_section(text: str, heading: str) -> str:
+    pattern = re.compile(
+        rf"\*\*{re.escape(heading)}\*\*\s*\n\n(.*?)(?=\n\n\*\*[^*\n]+\*\*|\Z)",
+        re.DOTALL,
+    )
+    match = pattern.search(text or "")
+    return match.group(1).strip() if match else ""
+
+
+def _schema_plan_from_schema_context(text: str) -> dict[str, Any] | None:
+    table_section = _extract_section(text, "数据表")
+    if not table_section:
+        return None
+
+    tables: list[str] = []
+    details: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+
+    for line in table_section.splitlines():
+        table_match = re.match(r"^-\s+\*\*([^*]+)\*\*\s*$", line.strip())
+        if table_match:
+            current = {
+                "name": table_match.group(1).strip(),
+                "comment": "",
+                "description": "",
+            }
+            if current["name"]:
+                tables.append(current["name"])
+                details.append(current)
+            continue
+        if current is None:
+            continue
+        comment_match = re.match(r"^-\s+说明[：:]\s*(.*)$", line.strip())
+        if comment_match:
+            current["comment"] = comment_match.group(1).strip()
+            continue
+        desc_match = re.match(r"^-\s+摘要[：:]\s*(.*)$", line.strip())
+        if desc_match:
+            current["description"] = desc_match.group(1).strip()
+
+    if not tables:
+        return None
+
+    return {
+        "tables": tables,
+        "table_details": details,
+        "reason": _extract_section(text, "选表说明"),
     }
 
 
@@ -265,6 +325,15 @@ def _skip_sql_generator_aggregated_event(event: Any, *, got_partial: bool) -> bo
     if not got_partial:
         return False
     return getattr(event, "partial", None) is not True
+
+
+def _should_replace_sql_stream_with_final(stage: str, event: Any, *, got_partial: bool) -> bool:
+    """Prefer the final SQL response over earlier streamed draft tokens."""
+    if stage != "sql_generator" or not got_partial:
+        return False
+    if getattr(event, "partial", None) is True:
+        return False
+    return bool(_iter_event_text_chunks(event))
 
 
 def _extract_sql_blocks(text: str) -> list[str]:
@@ -701,6 +770,12 @@ class ChatService:
                     async for line in emit_schema_plan_part(payload):
                         yield line
 
+            if stage == "load_sql_schema_context" and not schema_plan_emitted:
+                payload = _schema_plan_from_schema_context(stage_text)
+                if _is_table_selection_result(payload):
+                    async for line in emit_schema_plan_part(payload):
+                        yield line
+
             if stage == "execute_sql" and not sql_result_emitted:
                 payload = _extract_sql_result_payload(stage_text)
                 data_id = f"{turn_id}-data-sql-result"
@@ -804,14 +879,34 @@ class ChatService:
                     )
                     if selection is not None:
                         latest_table_selection = selection
-                        if not schema_plan_emitted:
-                            async for line in emit_schema_plan_part(selection):
-                                yield line
+
+                replace_sql_stream_with_final = (
+                    stage in _TEXT_STREAM_STAGES
+                    and text_stream_open
+                    and active_stage == stage
+                    and _should_replace_sql_stream_with_final(
+                        stage,
+                        event,
+                        got_partial=text_stream_got_partial,
+                    )
+                )
+
+                if replace_sql_stream_with_final:
+                    stage_texts[stage] = ""
+                    stage_sent_len[stage] = 0
+                    yield sse_line(StreamEvent(
+                        type=StreamEventType.PART_DELTA,
+                        session_id=session_id,
+                        turn_id=turn_id,
+                        part_id=part_id,
+                        patch={"op": "field_set", "path": "text", "value": ""},
+                    ))
 
                 skip_text_aggregated = (
                     stage in _TEXT_STREAM_STAGES
                     and text_stream_open
                     and active_stage == stage
+                    and not replace_sql_stream_with_final
                     and _skip_sql_generator_aggregated_event(
                         event,
                         got_partial=text_stream_got_partial,

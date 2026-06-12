@@ -13,6 +13,7 @@ SQL_VALIDATION_FEEDBACK_STATE_KEY = "sql_validation_feedback"
 SQL_LAST_ATTEMPT_STATE_KEY = "sql_last_attempt"
 SQL_VALIDATED_SQL_STATE_KEY = "sql_validated_sql"
 SQL_GENERATION_ATTEMPT_STATE_KEY = "sql_generation_attempt"
+SQL_SELECTED_TABLE_DETAILS_STATE_KEY = "sql_selected_table_details"
 MAX_SQL_GENERATION_ATTEMPTS = 3
 SQL_LAST_ATTEMPT_MAX_CHARS = 12_000
 DEFAULT_SQL_EXECUTION_MAX_ROWS = 100
@@ -180,6 +181,18 @@ def format_sql_generator_user_message(ctx: Context, node_input) -> str:
     base = (ctx.state.get(SQL_SCHEMA_CONTEXT_STATE_KEY) or "").strip()
     if not base:
         base = text_from_node_input(node_input)
+    allowed_tables = selected_table_names_from_state(ctx)
+    if allowed_tables:
+        allowed_text = "\n".join(f"- `{name}`" for name in allowed_tables)
+        base = "\n".join([
+            base,
+            "",
+            "**本轮允许使用的物理表名（必须逐字照抄）**",
+            "",
+            allowed_text,
+            "",
+            "SQL 中的 FROM/JOIN 表名只能来自上面列表，不得改写、缩写、补全或使用相似表名。",
+        ])
     feedback = (ctx.state.get(SQL_VALIDATION_FEEDBACK_STATE_KEY) or "").strip()
     if not feedback:
         return base
@@ -274,10 +287,19 @@ def format_table_selector_user_message(stage: SearchStageOutput) -> str:
     """Readable user turn for table_selector (avoid ADK BaseModel → JSON dump)."""
     user_message = (stage.user_message or "").strip() or "（无）"
     retrieval_context = (stage.retrieval_context or "").strip() or "（无检索结果）"
+    candidate_lines = [
+        f"- T{index}: `{table_name}`"
+        for index, table_name in enumerate(stage.table_candidates, start=1)
+    ]
+    candidates = "\n".join(candidate_lines) if candidate_lines else "（无候选表）"
     return "\n".join([
         "## 用户问题",
         "",
         user_message,
+        "",
+        "## 候选表编号",
+        "",
+        candidates,
         "",
         "## 检索上下文",
         "",
