@@ -2,6 +2,7 @@
   @if (part().title && !isCompactPlan() && genericKind() !== 'sql_result') {
     <div class="chat-part__data-title">{{ part().title }}</div>
   }
+
   @if (part().schema === 'table_list' && rows().length) {
     <div class="chat-part__table-wrap">
       <table class="chat-part__table">
@@ -15,7 +16,7 @@
           @for (row of rows(); track row.name) {
             <tr>
               <td class="font-mono">{{ row.name }}</td>
-              <td>{{ row.comment || row.description || '—' }}</td>
+              <td>{{ row.comment || row.description || '无说明' }}</td>
             </tr>
           }
         </tbody>
@@ -38,7 +39,9 @@
           <div class="chat-part__plan-tables" aria-label="已选数据表">
             @for (table of selectedTableDetails(); track table.name) {
               <div class="chat-part__plan-table">
-                <div class="chat-part__plan-table-name">{{ table.comment || table.description || '未命名数据表' }}</div>
+                <div class="chat-part__plan-table-name">
+                  {{ table.comment || table.description || '未命名数据表' }}
+                </div>
                 <div class="chat-part__plan-table-code font-mono">{{ table.name }}</div>
               </div>
             }
@@ -127,8 +130,23 @@
       }
     </div>
   } @else {
-    <pre class="chat-part__tool-block"><code>{{ part().payload | json }}</code></pre>
+    <div class="chat-part__business">
+      <div class="chat-part__business-title">{{ fallbackTitle() }}</div>
+      <p class="chat-part__business-summary">{{ fallbackSummary() }}</p>
+      @if (fallbackItems().length) {
+        <ul class="chat-part__business-list">
+          @for (item of fallbackItems(); track item) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+    </div>
+    <details class="chat-part__tech-details">
+      <summary>查看技术详情</summary>
+      <pre class="chat-part__tool-block"><code>{{ part().payload | json }}</code></pre>
+    </details>
   }
+
   @if (part().truncated) {
     <p class="chat-part__truncated">结果已截断</p>
   }

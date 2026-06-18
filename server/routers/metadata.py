@@ -19,7 +19,9 @@ from tools.graph import (
     get_knowledge,
     get_sql,
     get_table,
+    list_all_table_join_relations,
     list_columns,
+    list_enum_items as list_enum_items_with_context,
     list_enums,
     list_knowledge,
     list_knowledge_relations,
@@ -38,7 +40,7 @@ from tools.graph import (
 )
 from server.schemas.common import Page
 from server.auth.deps import get_workspace_id
-from tools.graph.model import ColumnNode, EnumNode, KnowledgeNode, SQLNode, TableNode
+from tools.graph.model import ColumnNode, EnumListItem, EnumNode, KnowledgeNode, SQLNode, TableNode
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -199,6 +201,7 @@ def _assert_workspace(node, workspace_id: str):
 tables_router = APIRouter(prefix="/api/tables", tags=["tables"])
 columns_router = APIRouter(prefix="/api/columns", tags=["columns"])
 enums_router = APIRouter(prefix="/api/enums", tags=["enums"])
+join_relations_router = APIRouter(prefix="/api/join-relations", tags=["join-relations"])
 knowledge_router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 sqls_router = APIRouter(prefix="/api/sqls", tags=["sqls"])
 
@@ -266,6 +269,27 @@ async def replace_table_join_relations_item(
     _assert_workspace(await get_table(uuid), workspace_id)
     relations = await replace_table_join_relations(workspace_id, uuid, _to_table_join_specs(body))
     return _to_table_join_views(relations)
+
+
+@join_relations_router.get("", response_model=Page[TableJoinRelationView])
+async def list_join_relation_items(
+        page: int = Query(1, ge=1),
+        page_size: int = Query(MAX_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
+        q: str | None = Query(None, description="按表名、表说明或关联条件搜索"),
+        workspace_id: str = Depends(get_workspace_id),
+) -> Page[TableJoinRelationView]:
+    result = await list_all_table_join_relations(
+        workspace_id=workspace_id,
+        page=page,
+        page_size=page_size,
+        q=q,
+    )
+    return Page(
+        items=_to_table_join_views(result.items),
+        total=result.total,
+        page=result.page,
+        page_size=result.page_size,
+    )
 
 
 @tables_router.put("/{uuid}", response_model=TableNode)
@@ -371,15 +395,15 @@ async def delete_column_item(
     await delete_column(uuid)
 
 
-@enums_router.get("", response_model=Page[EnumNode])
+@enums_router.get("", response_model=Page[EnumListItem])
 async def list_enum_items(
         column_uuid: str | None = Query(None, description="按列 uuid 过滤"),
         page: int = Query(1, ge=1),
         page_size: int = Query(MAX_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
         q: str | None = Query(None, description="按枚举值搜索"),
         workspace_id: str = Depends(get_workspace_id),
-) -> Page[EnumNode]:
-    result = await list_enums(
+) -> Page[EnumListItem]:
+    result = await list_enum_items_with_context(
         workspace_id=workspace_id,
         column_uuid=column_uuid,
         page=page,

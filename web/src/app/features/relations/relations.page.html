@@ -1,0 +1,78 @@
+<section class="metadata-page">
+  <header class="metadata-page__header">
+    <div>
+      <h1>表关系</h1>
+      <p>查看数据表之间的关联条件，用于确认 JOIN 路径和问数生成 SQL 的依据。</p>
+    </div>
+    <button type="button" class="metadata-page__icon-btn" (click)="refresh()" title="刷新">
+      <mat-icon [class.is-spinning]="loading()">refresh</mat-icon>
+    </button>
+  </header>
+
+  <div class="metadata-page__toolbar">
+    <label class="metadata-page__search">
+      <mat-icon>search</mat-icon>
+      <input
+        type="search"
+        placeholder="搜索来源表、目标表或关联条件"
+        [ngModel]="query()"
+        (ngModelChange)="onQueryChange($event)"
+      />
+    </label>
+  </div>
+
+  <div class="metadata-page__table-wrap">
+    @if (loading()) {
+      <div class="metadata-page__loading">
+        <mat-spinner diameter="28" />
+      </div>
+    } @else if (!items().length) {
+      <app-empty-state icon="hub" title="暂无表关系" description="当前没有匹配的表关系。" />
+    } @else {
+      <table class="metadata-page__table">
+        <thead>
+          <tr>
+            <th>来源表</th>
+            <th>目标表</th>
+            <th>关联条件</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items(); track item.from_table_uuid + item.to_table_uuid + item.condition) {
+            <tr>
+              <td class="font-mono">{{ item.from_table_name }}</td>
+              <td class="font-mono">{{ item.to_table_name }}</td>
+              <td class="metadata-page__condition">{{ item.condition || '未配置关联条件' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+
+  <footer class="metadata-page__pager">
+    <span class="metadata-page__pager-total">共 {{ total() }} 条</span>
+    <select
+      class="metadata-page__page-size"
+      [ngModel]="pageSize()"
+      (ngModelChange)="onPageSizeChange($event)"
+      [disabled]="loading()"
+    >
+      @for (size of pageSizeOptions; track size) {
+        <option [ngValue]="size">{{ size }}条/页</option>
+      }
+    </select>
+    <button type="button" class="metadata-page__pager-btn" (click)="prevPage()" [disabled]="page() <= 1 || loading()">
+      上一页
+    </button>
+    <span class="metadata-page__pager-text">第 {{ page() }} / {{ totalPages() }} 页</span>
+    <button
+      type="button"
+      class="metadata-page__pager-btn"
+      (click)="nextPage()"
+      [disabled]="page() >= totalPages() || loading()"
+    >
+      下一页
+    </button>
+  </footer>
+</section>

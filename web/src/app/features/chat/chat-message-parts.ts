@@ -15,7 +15,7 @@ const PART_ORDER = {
   error: 90,
 } as const;
 
-const QUERY_RESULT_TEXT_RE = /(?:##|###)\s*[✅❌📊]?\s*(?:SQL 合法性检查|查询结果)/;
+const QUERY_RESULT_TEXT_RE = /(?:##|###)\s*[✅🔎📊]?\s*(?:SQL 合法性检查|查询结果)/;
 
 export function isQueryResultText(part: TextPart): boolean {
   return QUERY_RESULT_TEXT_RE.test(part.text);

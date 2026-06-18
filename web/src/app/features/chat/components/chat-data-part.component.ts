@@ -157,4 +157,67 @@ export class ChatDataPartComponent {
   protected isCompactPlan(): boolean {
     return this.part().schema === 'generic' && this.genericKind() === 'schema_plan';
   }
+
+  protected fallbackTitle(): string {
+    if (this.part().title) {
+      return this.part().title;
+    }
+    const kind = this.genericKind();
+    const labels: Record<string, string> = {
+      retrieval_context: '检索上下文',
+      schema_context: '表结构上下文',
+      schema_plan: '选表结果',
+      sql_diagnostic: 'SQL 校验说明',
+      sql_result: '查询结果',
+    };
+    return labels[kind] || '结构化信息';
+  }
+
+  protected fallbackSummary(): string {
+    const kind = this.genericKind();
+    if (kind === 'retrieval_context') {
+      return '系统已找到与问题相关的业务资料，后续会用这些资料辅助选表和生成 SQL。';
+    }
+    if (kind === 'schema_context') {
+      return '系统已整理本次查询可使用的表、字段和关联关系。';
+    }
+    if (this.part().schema === 'column_list') {
+      return '系统返回了相关字段清单，可用于确认查询口径和输出列。';
+    }
+    if (this.part().schema === 'join_relations') {
+      return '系统返回了表之间的关联关系，可用于多表查询时确定连接方式。';
+    }
+    if (this.part().schema === 'graph_snapshot') {
+      return '系统返回了知识图谱片段，可用于理解表、字段和值之间的业务关系。';
+    }
+    return '系统返回了一段结构化信息，默认展示为业务摘要；需要排查时可展开技术详情查看原始数据。';
+  }
+
+  protected fallbackItems(): string[] {
+    const payload = this.part().payload;
+    const items: string[] = [];
+    const tables = this.values('tables').length || this.values('selected_tables').length;
+    const columns = this.values('columns').length || this.values('column_hints').length;
+    const enums = this.values('enums').length || this.values('enum_hints').length;
+    const knowledges = this.values('knowledges').length;
+
+    if (tables) {
+      items.push(`相关数据表：${tables} 个`);
+    }
+    if (columns) {
+      items.push(`相关字段：${columns} 个`);
+    }
+    if (enums) {
+      items.push(`相关枚举值：${enums} 个`);
+    }
+    if (knowledges) {
+      items.push(`相关业务知识：${knowledges} 条`);
+    }
+
+    const keys = Object.keys(payload).filter((key) => key !== 'kind');
+    if (!items.length && keys.length) {
+      items.push(`包含信息项：${keys.slice(0, 6).join('、')}`);
+    }
+    return items;
+  }
 }

@@ -352,6 +352,69 @@ async def list_table_join_relations(workspace_id: str, table_uuid: str) -> list[
     ]
 
 
+async def list_all_table_join_relations(
+        workspace_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        q: str | None = None,
+) -> PageResult[TableJoinRelation]:
+    page = max(page, 1)
+    page_size = max(page_size, 1)
+    skip = (page - 1) * page_size
+    keyword = (q or "").strip()
+
+    where_clause = f"""
+        from.workspace_id = $workspace_id
+        AND to.workspace_id = $workspace_id
+        AND (
+            $q = ''
+            OR from.name CONTAINS $q
+            OR to.name CONTAINS $q
+            OR coalesce(from.comment, '') CONTAINS $q
+            OR coalesce(to.comment, '') CONTAINS $q
+            OR coalesce(r.condition, '') CONTAINS $q
+        )
+    """
+
+    total_rows = await _run_read(
+        f"""
+        MATCH (from:{NodeType.TABLE})-[r:{EdgeType.JOINS}]->(to:{NodeType.TABLE})
+        WHERE {where_clause}
+        RETURN count(r) AS total
+        """,
+        workspace_id=workspace_id,
+        q=keyword,
+    )
+    total = int(total_rows[0]["total"]) if total_rows else 0
+
+    rows = await _run_read(
+        f"""
+        MATCH (from:{NodeType.TABLE})-[r:{EdgeType.JOINS}]->(to:{NodeType.TABLE})
+        WHERE {where_clause}
+        RETURN from.uuid AS from_table_uuid, from.name AS from_table_name,
+               to.uuid AS to_table_uuid, to.name AS to_table_name,
+               coalesce(r.condition, '') AS condition
+        ORDER BY from.name, to.name, condition
+        SKIP $skip LIMIT $limit
+        """,
+        workspace_id=workspace_id,
+        q=keyword,
+        skip=skip,
+        limit=page_size,
+    )
+    items = [
+        TableJoinRelation(
+            from_table_uuid=row["from_table_uuid"],
+            from_table_name=row["from_table_name"],
+            to_table_uuid=row["to_table_uuid"],
+            to_table_name=row["to_table_name"],
+            condition=row["condition"],
+        )
+        for row in rows
+    ]
+    return PageResult(items=items, total=total, page=page, page_size=page_size)
+
+
 async def replace_table_join_relations(
         workspace_id: str,
         table_uuid: str,

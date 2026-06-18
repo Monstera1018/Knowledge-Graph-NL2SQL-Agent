@@ -1,0 +1,89 @@
+<section class="metadata-page">
+  <header class="metadata-page__header">
+    <div>
+      <h1>枚举值</h1>
+      <p>查看字段可用取值，用于确认筛选条件和业务口径。</p>
+    </div>
+    <button type="button" class="metadata-page__icon-btn" (click)="refresh()" title="刷新">
+      <mat-icon [class.is-spinning]="loading()">refresh</mat-icon>
+    </button>
+  </header>
+
+  <div class="metadata-page__toolbar">
+    <label class="metadata-page__search">
+      <mat-icon>search</mat-icon>
+      <input
+        type="search"
+        placeholder="搜索枚举值、表名或字段名"
+        [ngModel]="query()"
+        (ngModelChange)="onQueryChange($event)"
+      />
+    </label>
+  </div>
+
+  <div class="metadata-page__table-wrap">
+    @if (loading()) {
+      <div class="metadata-page__loading">
+        <mat-spinner diameter="28" />
+      </div>
+    } @else if (!items().length) {
+      <app-empty-state icon="format_list_bulleted" title="暂无枚举值" description="当前没有匹配的枚举值。" />
+    } @else {
+      <table class="metadata-page__table">
+        <thead>
+          <tr>
+            <th>表说明</th>
+            <th>表名</th>
+            <th>字段说明</th>
+            <th>字段名</th>
+            <th>枚举值</th>
+            <th>节点编号</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (item of items(); track item.uuid) {
+            <tr>
+              <td>{{ item.table_comment || '无说明' }}</td>
+              <td class="font-mono">{{ item.table_name || '未知表' }}</td>
+              <td>
+                {{ item.column_comment || '无说明' }}
+                @if (item.column_dtype) {
+                  <span class="metadata-page__muted">({{ item.column_dtype }})</span>
+                }
+              </td>
+              <td class="font-mono">{{ item.column_name || '未知字段' }}</td>
+              <td>{{ item.value }}</td>
+              <td class="font-mono">{{ item.uuid }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+
+  <footer class="metadata-page__pager">
+    <span class="metadata-page__pager-total">共 {{ total() }} 条</span>
+    <select
+      class="metadata-page__page-size"
+      [ngModel]="pageSize()"
+      (ngModelChange)="onPageSizeChange($event)"
+      [disabled]="loading()"
+    >
+      @for (size of pageSizeOptions; track size) {
+        <option [ngValue]="size">{{ size }}条/页</option>
+      }
+    </select>
+    <button type="button" class="metadata-page__pager-btn" (click)="prevPage()" [disabled]="page() <= 1 || loading()">
+      上一页
+    </button>
+    <span class="metadata-page__pager-text">第 {{ page() }} / {{ totalPages() }} 页</span>
+    <button
+      type="button"
+      class="metadata-page__pager-btn"
+      (click)="nextPage()"
+      [disabled]="page() >= totalPages() || loading()"
+    >
+      下一页
+    </button>
+  </footer>
+</section>

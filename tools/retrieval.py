@@ -61,9 +61,9 @@ def dedupe_hits(hits: Sequence[VectorSearchHit]) -> List[VectorSearchHit]:
     best: Dict[str, VectorSearchHit] = {}
     for hit in hits:
         prev = best.get(hit.node_uuid)
-        if prev is None or hit.distance < prev.distance:
+        if prev is None or hit.distance > prev.distance:
             best[hit.node_uuid] = hit
-    return sorted(best.values(), key=lambda h: h.distance)
+    return sorted(best.values(), key=lambda h: h.distance, reverse=True)
 
 
 def _ensure_table(
@@ -342,9 +342,19 @@ async def _fetch_knowledge_entries(
 
     rows = await _run_read(
         f"""
+        MATCH (k:{NodeType.KNOWLEDGE})
+        WHERE k.uuid IN $knowledge_uuids
+        OPTIONAL MATCH (k)-[:{EdgeType.DESCRIBES}]->(target)
+        RETURN DISTINCT k.uuid AS knowledge_uuid,
+               k.name AS name,
+               k.description AS description,
+               target.uuid AS target_uuid
+        UNION
         MATCH (k:{NodeType.KNOWLEDGE})-[:{EdgeType.DESCRIBES}]->(target)
-        WHERE k.uuid IN $knowledge_uuids OR target.uuid IN $target_uuids
-        RETURN DISTINCT k.uuid AS knowledge_uuid, k.name AS name, k.description AS description,
+        WHERE target.uuid IN $target_uuids
+        RETURN DISTINCT k.uuid AS knowledge_uuid,
+               k.name AS name,
+               k.description AS description,
                target.uuid AS target_uuid
         """,
         knowledge_uuids=unique_k,
@@ -605,6 +615,8 @@ def format_graph_context_for_llm(bundle: RetrievalGraphBundle) -> str:
             if item.related_tables:
                 refs = "、".join(f"`{r}`" for r in item.related_tables)
                 line += f"（关联 {refs}）"
+            else:
+                line += "（未绑定表字段）"
             knowledge_lines.append(line)
         parts.append(_section_block("业务知识", knowledge_lines))
 

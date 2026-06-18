@@ -1,0 +1,7 @@
+@import '../enums/enums.page.css';
+
+.metadata-page__condition {
+  max-width: 48rem;
+  color: #334155;
+  overflow-wrap: anywhere;
+}

@@ -35,6 +35,16 @@ export interface EnumNode extends BaseNode {
   value: string;
 }
 
+export interface EnumListItem extends EnumNode {
+  table_uuid: string;
+  table_name: string;
+  table_comment: string;
+  column_uuid: string;
+  column_name: string;
+  column_comment: string;
+  column_dtype: string;
+}
+
 export interface KnowledgeNode extends BaseNode {
   name: string;
   description: string;

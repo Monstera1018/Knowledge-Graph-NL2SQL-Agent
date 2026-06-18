@@ -35,6 +35,16 @@ class EnumNode(BaseNode):
     value: str
 
 
+class EnumListItem(EnumNode):
+    table_uuid: str = ""
+    table_name: str = ""
+    table_comment: str = ""
+    column_uuid: str = ""
+    column_name: str = ""
+    column_comment: str = ""
+    column_dtype: str = ""
+
+
 class KnowledgeNode(BaseNode):
     name: str
     description: str

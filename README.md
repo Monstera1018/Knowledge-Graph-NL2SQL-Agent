@@ -143,11 +143,29 @@ VECTOR_DIMENSION=2048
 ### Milvus 配置
 
 ```env
-VECTOR_COLLECTION_NAME=TYWS
+VECTOR_COLLECTION_TABLE=TYWS_TABLE
+VECTOR_COLLECTION_ENUM=TYWS_ENUM
+VECTOR_COLLECTION_KNOWLEDGE=TYWS_KNOWLEDGE
+VECTOR_COLLECTION_SQL=TYWS_SQL
 VECTOR_DIMENSION=2048
 VECTOR_URI=http://127.0.0.1:29531
 VECTOR_TIMEOUT=5
+VECTOR_TOPK_TABLE=10
+VECTOR_TOPK_ENUM=8
+VECTOR_TOPK_KNOWLEDGE=8
+VECTOR_TOPK_SQL=5
 ```
+
+向量库按数据类型拆分为 4 个 Milvus collection：
+
+```text
+TYWS_TABLE      TABLE / COLUMN
+TYWS_ENUM       ENUM
+TYWS_KNOWLEDGE  KNOWLEDGE
+TYWS_SQL        SQL
+```
+
+检索时会分别从 4 个 collection 召回，再合并到检索上下文中，避免表字段或枚举结果挤占业务知识、历史 SQL 的召回名额。
 
 ### Neo4j 配置
 
@@ -271,8 +289,11 @@ KNOWLEDGE  59
 SQL        9
 
 Milvus:
-collection: TYWS
-row_count: 1998
+collections:
+  TYWS_TABLE
+  TYWS_ENUM
+  TYWS_KNOWLEDGE
+  TYWS_SQL
 ```
 
 ### 初始化数据清洗说明
@@ -297,7 +318,7 @@ resources/data/枚举值DEV.before_delete_invalid_rows.xlsx
 
 ```text
 Neo4j：GRAPH_URI / GRAPH_USER / GRAPH_PASSWORD
-Milvus：VECTOR_URI / VECTOR_COLLECTION_NAME
+Milvus：VECTOR_URI / VECTOR_COLLECTION_TABLE / VECTOR_COLLECTION_ENUM / VECTOR_COLLECTION_KNOWLEDGE / VECTOR_COLLECTION_SQL
 大模型接口：LLM_MODEL_NAME / OPENAI_API_BASE / OPENAI_API_KEY
 Embedding 接口：EMBEDDING_MODEL_NAME / EMBEDDING_API_BASE / EMBEDDING_API_KEY
 业务数据库：DATABASE_URL 或 DATABASE_DRIVER + DATABASE_HOST 等配置
@@ -448,11 +469,40 @@ default
 ```text
 /login      登录页
 /catalog    数据目录，维护表、字段、枚举、表关系
+/enums      枚举值列表，展示枚举值及其所属表、字段信息
+/relations  表关系列表，展示来源表、目标表和关联条件
 /knowledge  业务知识维护
 /sql        历史 SQL 维护
 /ingest     Excel 导入任务页面
 /chat       智能问数聊天页面
 ```
+
+### 元数据列表分页
+
+`/enums` 和 `/relations` 页面用于业务人员查看初始化到知识图谱中的枚举值和表关系。
+
+这两个页面的列表区采用独立滚动容器，页面底部提供统一分页控制：
+
+```text
+共 X 条  [50条/页 ▼]  [上一页]  第 N / M 页  [下一页]
+```
+
+每页条数支持：
+
+```text
+10条/页、20条/页、30条/页、50条/页、100条/页
+```
+
+切换每页条数后会自动回到第 1 页，并按新的 `page_size` 重新请求后端接口。
+
+相关后端接口：
+
+```text
+GET /api/enums?page=1&page_size=50
+GET /api/join-relations?page=1&page_size=50
+```
+
+注意：这些接口需要登录态。未登录时直接访问接口会返回 `401 未登录或会话已过期`，应先通过前端登录后再访问页面。
 
 ## 常用开发命令
 
@@ -589,6 +639,15 @@ COLUMN -HAS-> ENUM
 KNOWLEDGE -DESCRIBES-> TABLE/COLUMN
 SQL -USES-> TABLE/COLUMN
 TABLE -JOINS-> TABLE
+```
+
+Milvus collection 与节点类型：
+
+```text
+TYWS_TABLE      TABLE / COLUMN
+TYWS_ENUM       ENUM
+TYWS_KNOWLEDGE  KNOWLEDGE
+TYWS_SQL        SQL
 ```
 
 Milvus 向量记录字段：

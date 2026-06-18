@@ -5,6 +5,7 @@ import { Observable } from 'rxjs';
 import type { ImportStage } from '../models/ingest.models';
 import {
   ColumnNode,
+  EnumListItem,
   EnumNode,
   GraphSnapshot,
   JobCreatedResponse,
@@ -44,6 +45,12 @@ export class MetadataApiService {
 
   listTableJoinRelations(uuid: string): Observable<TableJoinRelation[]> {
     return this.http.get<TableJoinRelation[]>(`/api/tables/${uuid}/join-relations`);
+  }
+
+  listJoinRelations(query: ListQuery = {}): Observable<Page<TableJoinRelation>> {
+    return this.http.get<Page<TableJoinRelation>>('/api/join-relations', {
+      params: this.toParams(query),
+    });
   }
 
   replaceTableJoinRelations(
@@ -104,8 +111,8 @@ export class MetadataApiService {
     return this.http.delete<void>(`/api/columns/${uuid}`);
   }
 
-  listEnums(query: ListQuery = {}): Observable<Page<EnumNode>> {
-    return this.http.get<Page<EnumNode>>('/api/enums', { params: this.toParams(query) });
+  listEnums(query: ListQuery = {}): Observable<Page<EnumListItem>> {
+    return this.http.get<Page<EnumListItem>>('/api/enums', { params: this.toParams(query) });
   }
 
   createEnum(body: Pick<EnumNode, 'value'> & { column_uuid: string }): Observable<EnumNode> {

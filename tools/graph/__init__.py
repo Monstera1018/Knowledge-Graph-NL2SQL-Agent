@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from tools.graph.crud.column import create_column, delete_column, get_column, list_columns, update_column
-from tools.graph.crud.enum import create_enum, delete_enum, get_enum, list_enums, update_enum
+from tools.graph.crud.enum import create_enum, delete_enum, get_enum, list_enum_items, list_enums, update_enum
 from tools.graph.crud.knowledge import (
     create_knowledge,
     delete_knowledge,
@@ -15,6 +15,7 @@ from tools.graph.crud.table import (
     create_table,
     delete_table,
     get_table,
+    list_all_table_join_relations,
     list_table_join_relations,
     list_tables,
     replace_table_join_relations,

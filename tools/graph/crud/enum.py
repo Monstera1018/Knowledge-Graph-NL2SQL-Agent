@@ -7,7 +7,7 @@ from tools.graph.internal import create_graph_node_tx, \
     build_stable_enum_uuid, commit_graph_then_vectors, _run_read, graph_node_exists_tx, upsert_graph_node_tx, \
     upsert_graph_edge_tx, _run_write
 from tools.graph.model import NodeType, EdgeType, ConflictError, NotFoundError, PageResult, \
-    HasEdge, EnumNode
+    HasEdge, EnumListItem, EnumNode
 from tools.vector import delete_vector_records_by_node_uuids, upsert_vector_records
 
 
@@ -146,6 +146,80 @@ async def list_enums(
         limit=page_size,
     )
     items = [_to_enum_node(dict(row["e"])) for row in rows]
+    return PageResult(items=items, total=total, page=page, page_size=page_size)
+
+
+async def list_enum_items(
+        workspace_id: str,
+        column_uuid: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+        q: str | None = None,
+) -> PageResult[EnumListItem]:
+    page = max(page, 1)
+    page_size = max(page_size, 1)
+    skip = (page - 1) * page_size
+    keyword = (q or "").strip()
+
+    where_clause = f"""
+        t.workspace_id = $workspace_id
+        AND c.workspace_id = $workspace_id
+        AND e.workspace_id = $workspace_id
+        AND ($column_uuid = '' OR c.uuid = $column_uuid)
+        AND (
+            $q = ''
+            OR e.value CONTAINS $q
+            OR c.name CONTAINS $q
+            OR coalesce(c.comment, '') CONTAINS $q
+            OR t.name CONTAINS $q
+            OR coalesce(t.comment, '') CONTAINS $q
+        )
+    """
+
+    total_rows = await _run_read(
+        f"""
+        MATCH (t:{NodeType.TABLE})-[:{EdgeType.HAS}]->(c:{NodeType.COLUMN})-[:{EdgeType.HAS}]->(e:{NodeType.ENUM})
+        WHERE {where_clause}
+        RETURN count(e) AS total
+        """,
+        workspace_id=workspace_id,
+        column_uuid=column_uuid or "",
+        q=keyword,
+    )
+    total = int(total_rows[0]["total"]) if total_rows else 0
+
+    rows = await _run_read(
+        f"""
+        MATCH (t:{NodeType.TABLE})-[:{EdgeType.HAS}]->(c:{NodeType.COLUMN})-[:{EdgeType.HAS}]->(e:{NodeType.ENUM})
+        WHERE {where_clause}
+        RETURN e, c, t
+        ORDER BY t.name, c.name, e.value
+        SKIP $skip LIMIT $limit
+        """,
+        workspace_id=workspace_id,
+        column_uuid=column_uuid or "",
+        q=keyword,
+        skip=skip,
+        limit=page_size,
+    )
+    items: list[EnumListItem] = []
+    for row in rows:
+        enum = dict(row["e"])
+        column = dict(row["c"])
+        table = dict(row["t"])
+        items.append(EnumListItem(
+            uuid=enum["uuid"],
+            workspace_id=enum.get("workspace_id", workspace_id),
+            type=enum.get("type", NodeType.ENUM),
+            value=enum.get("value", ""),
+            table_uuid=table.get("uuid", ""),
+            table_name=table.get("name", ""),
+            table_comment=table.get("comment", ""),
+            column_uuid=column.get("uuid", ""),
+            column_name=column.get("name", ""),
+            column_comment=column.get("comment", ""),
+            column_dtype=column.get("dtype", ""),
+        ))
     return PageResult(items=items, total=total, page=page, page_size=page_size)
 
 

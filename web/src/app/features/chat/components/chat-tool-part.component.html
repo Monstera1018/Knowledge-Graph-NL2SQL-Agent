@@ -1,13 +1,80 @@
 <details class="chat-part chat-part--tool" [open]="part().phase === 'call'">
   <summary class="chat-part__tool-summary">
     <mat-icon>{{ part().phase === 'call' ? 'build' : 'check_circle' }}</mat-icon>
-    <span class="chat-part__tool-title">{{ part().title || part().name }}</span>
-    <span class="chat-part__tool-phase">{{ part().phase === 'call' ? '调用中' : '已完成' }}</span>
+    <span class="chat-part__tool-title">{{ stageLabel() }}</span>
+    <span class="chat-part__tool-phase">{{ phaseText() }}</span>
   </summary>
-  @if (part().input) {
-    <pre class="chat-part__tool-block"><code>{{ part().input | json }}</code></pre>
-  }
-  @if (part().output !== undefined && part().output !== null) {
-    <pre class="chat-part__tool-block"><code>{{ part().output | json }}</code></pre>
+
+  @if (showBusinessSummary()) {
+    <div class="chat-part__business">
+      <div class="chat-part__business-title">{{ businessTitle() }}</div>
+      <p class="chat-part__business-summary">{{ businessSummary() }}</p>
+      @if (businessItems().length) {
+        <ul class="chat-part__business-list">
+          @for (item of businessItems(); track item) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+      @if (tableSelectionDetails().length) {
+        <div class="chat-part__context-sections">
+          <div class="chat-part__context-section">
+            <div class="chat-part__context-title">选表结果</div>
+            <div class="chat-part__context-list">
+              @for (table of tableSelectionDetails(); track table.name) {
+                <div class="chat-part__context-item">
+                  <div class="chat-part__context-item-main">
+                    {{ table.comment || table.description || '未命名数据表' }}
+                  </div>
+                  <div class="chat-part__context-item-sub font-mono">{{ table.name }}</div>
+                </div>
+              }
+            </div>
+            @if (tableSelectionReason()) {
+              <p class="chat-part__context-reason">{{ tableSelectionReason() }}</p>
+            }
+          </div>
+        </div>
+      }
+      @if (contextSections().length) {
+        <div class="chat-part__context-sections">
+          @for (section of contextSections(); track section.title) {
+            <details class="chat-part__context-section" open>
+              <summary class="chat-part__context-title">
+                <span>{{ section.title }}</span>
+                <span class="chat-part__context-count">{{ section.items.length }} 条</span>
+              </summary>
+              @if (section.items.length) {
+                <div class="chat-part__context-list">
+                  @for (item of section.items; track item) {
+                    <div class="chat-part__context-item">{{ item }}</div>
+                  }
+                </div>
+              } @else if (section.content) {
+                <p class="chat-part__context-empty">{{ section.content }}</p>
+              }
+            </details>
+          }
+        </div>
+      }
+    </div>
+    @if (hasTechnicalDetails()) {
+      <details class="chat-part__tech-details">
+        <summary>查看技术详情</summary>
+        @if (part().input) {
+          <pre class="chat-part__tool-block"><code>{{ part().input | json }}</code></pre>
+        }
+        @if (part().output !== undefined && part().output !== null) {
+          <pre class="chat-part__tool-block"><code>{{ part().output | json }}</code></pre>
+        }
+      </details>
+    }
+  } @else {
+    @if (part().input) {
+      <pre class="chat-part__tool-block"><code>{{ part().input | json }}</code></pre>
+    }
+    @if (part().output !== undefined && part().output !== null) {
+      <pre class="chat-part__tool-block"><code>{{ part().output | json }}</code></pre>
+    }
   }
 </details>

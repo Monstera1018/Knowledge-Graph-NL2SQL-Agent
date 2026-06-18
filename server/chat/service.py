@@ -231,6 +231,33 @@ def _schema_plan_payload(selection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _enrich_table_selection(
+        selection: dict[str, Any],
+        table_candidates: list[str],
+) -> dict[str, Any]:
+    result = dict(selection)
+    tables = result.get("tables")
+    if not isinstance(tables, list):
+        tables = result.get("selected_tables")
+    if not isinstance(tables, list) or not tables:
+        selected: list[str] = []
+        raw_ids = result.get("table_ids")
+        if isinstance(raw_ids, list):
+            for raw_id in raw_ids:
+                match = re.match(r"^T(\d+)$", str(raw_id).strip(), re.IGNORECASE)
+                if not match:
+                    continue
+                index = int(match.group(1)) - 1
+                if 0 <= index < len(table_candidates):
+                    table_name = table_candidates[index]
+                    if table_name and table_name not in selected:
+                        selected.append(table_name)
+        if selected:
+            result["tables"] = selected
+            result["selected_tables"] = selected
+    return result
+
+
 def _extract_section(text: str, heading: str) -> str:
     pattern = re.compile(
         rf"\*\*{re.escape(heading)}\*\*\s*\n\n(.*?)(?=\n\n\*\*[^*\n]+\*\*|\Z)",
@@ -238,6 +265,31 @@ def _extract_section(text: str, heading: str) -> str:
     )
     match = pattern.search(text or "")
     return match.group(1).strip() if match else ""
+
+
+def _extract_context_sections(text: str) -> list[dict[str, Any]]:
+    """Parse compact Markdown context into user-facing sections."""
+    sections: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"\*\*([^*\n]+)\*\*\s*\n\n(.*?)(?=\n\n\*\*[^*\n]+\*\*|\Z)",
+        re.DOTALL,
+    )
+    for match in pattern.finditer(text or ""):
+        title = match.group(1).strip()
+        body = match.group(2).strip()
+        if not title or not body:
+            continue
+        items = [
+            line.strip()[2:].strip()
+            for line in body.splitlines()
+            if line.strip().startswith("- ")
+        ]
+        sections.append({
+            "title": title,
+            "items": items,
+            "content": body,
+        })
+    return sections
 
 
 def _schema_plan_from_schema_context(text: str) -> dict[str, Any] | None:
@@ -576,6 +628,7 @@ class ChatService:
         text_stream_got_partial = False
         latest_validate_sql: dict[str, Any] | None = None
         latest_table_selection: dict[str, Any] | None = None
+        latest_table_candidates: list[str] = []
         schema_plan_emitted = False
         schema_plan_part_id = f"{turn_id}-data-schema-plan"
         sql_diagnostic_part_id = f"{turn_id}-sql-diag"
@@ -647,7 +700,7 @@ class ChatService:
         async def close_tool_part(stage: str, *, status: str = "ok"):
             nonlocal active_tool_part_id, active_tool_stage, sql_result_emitted
             nonlocal latest_validate_sql, sql_diagnostic_open, emitted
-            nonlocal latest_table_selection, schema_plan_emitted
+            nonlocal latest_table_selection, latest_table_candidates, schema_plan_emitted
             if not active_tool_part_id:
                 return
 
@@ -659,9 +712,27 @@ class ChatService:
                 if latest_validate_sql.get("ok") is False:
                     output["status"] = "error"
             elif isinstance(parsed, dict):
+                if stage == "search":
+                    candidates = parsed.get("table_candidates")
+                    latest_table_candidates = (
+                        [str(item) for item in candidates if str(item).strip()]
+                        if isinstance(candidates, list)
+                        else []
+                    )
+                    retrieval_context = parsed.get("retrieval_context")
+                    if isinstance(retrieval_context, str) and retrieval_context.strip():
+                        sections = _extract_context_sections(retrieval_context)
+                        output["sections"] = sections
+                        output["section_count"] = len(sections)
+                if stage == "table_selector":
+                    parsed = _enrich_table_selection(parsed, latest_table_candidates)
                 output["result"] = parsed
             elif stage_text and stage not in (*_TEXT_STREAM_STAGES, "validate_sql", "execute_sql"):
                 output["summary"] = stage_text[:600]
+                if stage in {"search", "load_sql_schema_context"}:
+                    sections = _extract_context_sections(stage_text)
+                    output["sections"] = sections
+                    output["section_count"] = len(sections)
 
             if stage == "format_validation_failure_response" and stage_text:
                 emitted = True

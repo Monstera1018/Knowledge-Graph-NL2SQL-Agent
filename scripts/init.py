@@ -12,15 +12,17 @@ load_dotenv(_PROJECT_ROOT.joinpath(".env"))
 
 from tools.ingest import run_all_imports, IMPORT_JOBS
 from tools.graph.internal import close_graph_driver, truncate_graph
-from tools.vector import close_client, drop_collection
+from tools.vector import close_client, drop_collection, flush_all_vector_collections
 
 
 async def main() -> None:
     await truncate_graph()
     await drop_collection()
+    await drop_collection(collection_name="TYWS")
 
     await run_all_imports("default", _PROJECT_ROOT.joinpath("resources", "data"), IMPORT_JOBS
                           )
+    await flush_all_vector_collections()
 
     await close_graph_driver()
     await close_client()

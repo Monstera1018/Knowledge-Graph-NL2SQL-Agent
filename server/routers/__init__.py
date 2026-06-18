@@ -9,6 +9,7 @@ from server.routers.ingest import router as import_router
 from server.routers.metadata import (
     columns_router,
     enums_router,
+    join_relations_router,
     knowledge_router,
     sqls_router,
     tables_router,
@@ -24,6 +25,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(tables_router)
     app.include_router(columns_router)
     app.include_router(enums_router)
+    app.include_router(join_relations_router)
     app.include_router(knowledge_router)
     app.include_router(sqls_router)
     app.include_router(graph_router)

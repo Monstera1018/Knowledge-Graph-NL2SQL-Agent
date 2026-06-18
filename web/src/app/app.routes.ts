@@ -21,6 +21,15 @@ export const routes: Routes = [
           import('./features/catalog/catalog.page').then((m) => m.CatalogPage),
       },
       {
+        path: 'enums',
+        loadComponent: () => import('./features/enums/enums.page').then((m) => m.EnumsPage),
+      },
+      {
+        path: 'relations',
+        loadComponent: () =>
+          import('./features/relations/relations.page').then((m) => m.RelationsPage),
+      },
+      {
         path: 'knowledge',
         loadComponent: () =>
           import('./features/knowledge/knowledge.page').then((m) => m.KnowledgePage),

@@ -520,6 +520,13 @@ async def import_sql_history(
                                 type=EdgeType.USES)
                     )
 
+                await upsert_vector_records(
+                    workspace_id,
+                    [sql_name, sql_logic, sql_content],
+                    NodeType.SQL,
+                    sql_uuid,
+                )
+
                 await emit_progress(
                     on_progress,
                     build_import_progress(

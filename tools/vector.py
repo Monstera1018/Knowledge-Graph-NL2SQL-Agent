@@ -1,25 +1,94 @@
 import uuid
-from typing import List, Optional, Sequence, overload
+from dataclasses import dataclass
+from typing import Any, List, Optional, Sequence, overload
 
 from pydantic import BaseModel, Field
 from pymilvus import AsyncMilvusClient, DataType
 
 from tools.common import require_non_empty_env
-from tools.graph.model import NodeType
 from tools.embedding import get_embeddings
 
 _client: AsyncMilvusClient | None = None
 
+_DEFAULT_SEARCH_EF = 64
+_DEFAULT_SEARCH_LIMIT = 10
 
-def _get_vector_schema_namespace() -> uuid.UUID:
-    return uuid.uuid5(
-        uuid.NAMESPACE_DNS,
-        _get_collection_name(),
+
+@dataclass(frozen=True)
+class _CollectionSearchSpec:
+    collection_name: str
+    node_types: tuple[str, ...]
+    limit: int
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = require_non_empty_env(name) if name in {
+        "VECTOR_TIMEOUT",
+        "VECTOR_DIMENSION",
+    } else None
+    if raw is None:
+        import os
+
+        raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(str(raw).strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _get_timeout() -> int:
+    return _env_int("VECTOR_TIMEOUT", 5)
+
+
+def _get_dimension() -> int:
+    return _env_int("VECTOR_DIMENSION", 2048)
+
+
+def _node_type_value(node_type: Any) -> str:
+    return str(getattr(node_type, "value", node_type))
+
+
+def collection_for_node_type(node_type: Any) -> str:
+    value = _node_type_value(node_type)
+    if value in {"TABLE", "COLUMN"}:
+        return require_non_empty_env("VECTOR_COLLECTION_TABLE")
+    if value == "ENUM":
+        return require_non_empty_env("VECTOR_COLLECTION_ENUM")
+    if value == "KNOWLEDGE":
+        return require_non_empty_env("VECTOR_COLLECTION_KNOWLEDGE")
+    if value == "SQL":
+        return require_non_empty_env("VECTOR_COLLECTION_SQL")
+    raise ValueError(f"Unsupported vector node type: {node_type}")
+
+
+def all_vector_collections() -> List[str]:
+    return list(
+        dict.fromkeys(
+            [
+                require_non_empty_env("VECTOR_COLLECTION_TABLE"),
+                require_non_empty_env("VECTOR_COLLECTION_ENUM"),
+                require_non_empty_env("VECTOR_COLLECTION_KNOWLEDGE"),
+                require_non_empty_env("VECTOR_COLLECTION_SQL"),
+            ]
+        )
     )
 
 
-def build_stable_vector_uuid(workspace_id: str, node_uuid: str, content: str) -> str:
-    return uuid.uuid5(_get_vector_schema_namespace(), f"{workspace_id}:{node_uuid}:{content}").hex
+def _collection_schema_namespace(collection_name: str) -> uuid.UUID:
+    return uuid.uuid5(uuid.NAMESPACE_DNS, collection_name)
+
+
+def build_stable_vector_uuid(
+        workspace_id: str,
+        node_uuid: str,
+        content: str,
+        *,
+        collection_name: str,
+) -> str:
+    namespace = _collection_schema_namespace(collection_name)
+    return uuid.uuid5(namespace, f"{workspace_id}:{node_uuid}:{content}").hex
 
 
 class VectorRecord(BaseModel):
@@ -27,7 +96,7 @@ class VectorRecord(BaseModel):
     workspace_id: str
     text: str
     vector: List[float] = []
-    node_type: NodeType
+    node_type: str
     node_uuid: str
 
 
@@ -35,16 +104,10 @@ class VectorSearchHit(BaseModel):
     id: str
     workspace_id: str
     text: str
-    node_type: NodeType
+    node_type: str
     node_uuid: str
-    distance: float = Field(description="Milvus COSINE distance; lower is more similar.")
-
-
-_DEFAULT_SEARCH_LIMIT = 10
-_DEFAULT_SEARCH_EF=64
-
-def _get_collection_name() -> str:
-    return require_non_empty_env("VECTOR_COLLECTION_NAME")
+    distance: float = Field(description="Milvus COSINE score; higher is more similar.")
+    collection_name: str = ""
 
 
 def get_client() -> AsyncMilvusClient:
@@ -56,21 +119,9 @@ def get_client() -> AsyncMilvusClient:
             raise ValueError(
                 "VECTOR_URI is required but missing or empty; set it in the environment or .env."
             )
-        timeout_raw = require_non_empty_env("VECTOR_TIMEOUT")
-        if timeout_raw is None or not str(timeout_raw).strip():
-            raise ValueError(
-                "VECTOR_TIMEOUT is required but missing or empty; set it in the environment or .env."
-            )
-        try:
-            timeout = int(timeout_raw)
-        except ValueError as exc:
-            raise ValueError(
-                f"VECTOR_TIMEOUT must be an integer, got {timeout_raw!r}"
-            ) from exc
-        _client = AsyncMilvusClient(uri=uri.strip(), timeout=timeout)
+        _client = AsyncMilvusClient(uri=uri.strip(), timeout=_get_timeout())
 
     assert isinstance(_client, AsyncMilvusClient)
-
     return _client
 
 
@@ -87,16 +138,14 @@ async def drop_collection(
         timeout: Optional[int] = None,
 ) -> None:
     if client is None:
-        client: AsyncMilvusClient = get_client()
-
-    if collection_name is None:
-        collection_name: str = require_non_empty_env("VECTOR_COLLECTION_NAME")
-
+        client = get_client()
     if timeout is None:
-        timeout = int(require_non_empty_env("VECTOR_TIMEOUT"))
+        timeout = _get_timeout()
 
-    if await client.has_collection(collection_name):
-        await client.drop_collection(collection_name, timeout=timeout)
+    collection_names = [collection_name] if collection_name else all_vector_collections()
+    for name in collection_names:
+        if await client.has_collection(name):
+            await client.drop_collection(name, timeout=timeout)
 
 
 async def create_collection(
@@ -106,89 +155,58 @@ async def create_collection(
         timeout: Optional[int] = None,
 ) -> None:
     if client is None:
-        client: AsyncMilvusClient = get_client()
-
+        client = get_client()
     if collection_name is None:
-        collection_name: str = require_non_empty_env("VECTOR_COLLECTION_NAME")
-
+        raise ValueError("collection_name is required")
     if dimension is None:
-        dimension = int(require_non_empty_env("VECTOR_DIMENSION"))
-
+        dimension = _get_dimension()
     if timeout is None:
-        timeout = int(require_non_empty_env("VECTOR_TIMEOUT"))
+        timeout = _get_timeout()
 
     if await client.has_collection(collection_name):
         await drop_collection(client, collection_name, timeout)
 
     schema = client.create_schema()
-
     schema.add_field(
         field_name="id",
         is_primary=True,
         auto_id=False,
         datatype=DataType.VARCHAR,
-        max_length=64
+        max_length=64,
     )
-
-    schema.add_field(
-        field_name="vector",
-        datatype=DataType.FLOAT_VECTOR, dim=dimension
-    )
-
-    schema.add_field(
-        field_name="node_type",
-        datatype=DataType.VARCHAR,
-        max_length=64
-    )
-
-    schema.add_field(
-        field_name="node_uuid",
-        datatype=DataType.VARCHAR,
-        max_length=64
-    )
-
-    schema.add_field(
-        field_name="workspace_id",
-        datatype=DataType.VARCHAR,
-        max_length=64
-    )
-
-    schema.add_field(
-        field_name="text",
-        datatype=DataType.VARCHAR,
-        max_length=2048
-    )
+    schema.add_field(field_name="vector", datatype=DataType.FLOAT_VECTOR, dim=dimension)
+    schema.add_field(field_name="node_type", datatype=DataType.VARCHAR, max_length=64)
+    schema.add_field(field_name="node_uuid", datatype=DataType.VARCHAR, max_length=64)
+    schema.add_field(field_name="workspace_id", datatype=DataType.VARCHAR, max_length=64)
+    schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=16384)
 
     await client.create_collection(collection_name, schema=schema, timeout=timeout)
 
     index_params = client.prepare_index_params()
-
     index_params.add_index(
         field_name="vector",
         index_type="HNSW",
         metric_type="COSINE",
-        params={
-            "M": 32,
-            "efConstruction": 200
-        }
+        params={"M": 32, "efConstruction": 200},
     )
-
     await client.create_index(
         collection_name=collection_name,
         index_params=index_params,
-        timeout=timeout
+        timeout=timeout,
     )
-
     await client.load_collection(collection_name, timeout=timeout)
 
 
-async def ensure_collection() -> None:
+async def ensure_collection(collection_name: str) -> None:
     client = get_client()
-    collection_name = _get_collection_name()
     if await client.has_collection(collection_name):
         return
+    await create_collection(client=client, collection_name=collection_name)
 
-    await create_collection()
+
+async def ensure_all_collections() -> None:
+    for collection_name in all_vector_collections():
+        await ensure_collection(collection_name)
 
 
 def _milvus_escape(value: str) -> str:
@@ -200,14 +218,14 @@ def _milvus_filter_workspace(workspace_id: str) -> str:
     return f'workspace_id == "{ws}"'
 
 
-def _milvus_filter_node_types(node_types: Sequence[NodeType]) -> str:
-    quoted = ", ".join(f'"{node_type}"' for node_type in node_types)
+def _milvus_filter_node_types(node_types: Sequence[Any]) -> str:
+    quoted = ", ".join(f'"{_node_type_value(node_type)}"' for node_type in node_types)
     return f"node_type in [{quoted}]"
 
 
 def _build_semantic_search_filter(
         workspace_id: str,
-        node_types: Sequence[NodeType] | None = None,
+        node_types: Sequence[Any] | None = None,
 ) -> str:
     parts = [_milvus_filter_workspace(workspace_id)]
     if node_types:
@@ -216,7 +234,7 @@ def _build_semantic_search_filter(
 
 
 def _milvus_filter_in_node_uuids(node_uuids: List[str]) -> str:
-    quoted = ", ".join(f"\"{node_uuid}\"" for node_uuid in node_uuids)
+    quoted = ", ".join(f'"{_milvus_escape(node_uuid)}"' for node_uuid in node_uuids)
     return f"node_uuid in [{quoted}]"
 
 
@@ -226,25 +244,34 @@ async def delete_vector_records_by_node_uuids(node_uuids: List[str]) -> None:
         return
 
     client = get_client()
-    collection_name = _get_collection_name()
-    if not await client.has_collection(collection_name):
-        return
+    for collection_name in all_vector_collections():
+        if not await client.has_collection(collection_name):
+            continue
+        await client.delete(
+            collection_name=collection_name,
+            filter=_milvus_filter_in_node_uuids(unique),
+        )
 
-    await client.delete(
-        collection_name=collection_name,
-        filter=_milvus_filter_in_node_uuids(unique),
-    )
 
-
-def unique_texts_for_vector_upsert(workspace_id: str, node_uuid: str, texts: List[str]) -> List[str]:
-    """Drop blank texts and duplicates that share the same Milvus primary key.
-    """
+def unique_texts_for_vector_upsert(
+        workspace_id: str,
+        node_uuid: str,
+        texts: List[str],
+        *,
+        collection_name: str,
+) -> List[str]:
+    """Drop blank texts and duplicates that share the same Milvus primary key."""
     seen_ids: set[str] = set()
     unique: List[str] = []
     for text in texts:
         if not text.strip():
             continue
-        vector_id = build_stable_vector_uuid(workspace_id, node_uuid, text)
+        vector_id = build_stable_vector_uuid(
+            workspace_id,
+            node_uuid,
+            text,
+            collection_name=collection_name,
+        )
         if vector_id in seen_ids:
             continue
         seen_ids.add(vector_id)
@@ -252,31 +279,54 @@ def unique_texts_for_vector_upsert(workspace_id: str, node_uuid: str, texts: Lis
     return unique
 
 
-async def upsert_vector_records(workspace_id: str, texts: List[str], node_type: NodeType, node_uuid: str) -> None:
-    texts = unique_texts_for_vector_upsert(workspace_id, node_uuid, texts)
+async def upsert_vector_records(
+        workspace_id: str,
+        texts: List[str],
+        node_type: Any,
+        node_uuid: str,
+) -> None:
+    collection_name = collection_for_node_type(node_type)
+    texts = unique_texts_for_vector_upsert(
+        workspace_id,
+        node_uuid,
+        texts,
+        collection_name=collection_name,
+    )
     if len(texts) == 0:
         return
 
-    vector_records: List[VectorRecord] = []
     embeddings = await get_embeddings(texts)
+    vector_records: List[VectorRecord] = []
     for text, vector in zip(texts, embeddings):
         vector_records.append(
             VectorRecord(
-                id=build_stable_vector_uuid(workspace_id, node_uuid, text),
-                node_type=node_type,
+                id=build_stable_vector_uuid(
+                    workspace_id,
+                    node_uuid,
+                    text,
+                    collection_name=collection_name,
+                ),
+                node_type=_node_type_value(node_type),
                 node_uuid=node_uuid,
                 text=text,
                 vector=vector,
-                workspace_id=workspace_id
+                workspace_id=workspace_id,
             )
         )
 
-    await ensure_collection()
+    await ensure_collection(collection_name)
     client = get_client()
     await client.upsert(
-        collection_name=_get_collection_name(),
+        collection_name=collection_name,
         data=[x.model_dump() for x in vector_records],
     )
+
+
+async def flush_all_vector_collections() -> None:
+    client = get_client()
+    for collection_name in all_vector_collections():
+        if await client.has_collection(collection_name):
+            await client.flush(collection_name=collection_name)
 
 
 def _normalize_queries(queries: str | Sequence[str]) -> List[str]:
@@ -285,7 +335,7 @@ def _normalize_queries(queries: str | Sequence[str]) -> List[str]:
     return [(q or "").strip() for q in queries]
 
 
-def _parse_search_batch(batch: list[dict]) -> List[VectorSearchHit]:
+def _parse_search_batch(batch: list[dict], *, collection_name: str) -> List[VectorSearchHit]:
     hits: List[VectorSearchHit] = []
     for row in batch:
         hits.append(
@@ -293,12 +343,67 @@ def _parse_search_batch(batch: list[dict]) -> List[VectorSearchHit]:
                 id=str(row["id"]),
                 workspace_id=str(row["workspace_id"]),
                 text=str(row["text"]),
-                node_type=NodeType(row["node_type"]),
+                node_type=str(row["node_type"]),
                 node_uuid=str(row["node_uuid"]),
                 distance=float(row["distance"]),
+                collection_name=collection_name,
             )
         )
     return hits
+
+
+def _topk_env_for_node_type(node_type: Any) -> int:
+    value = _node_type_value(node_type)
+    if value in {"TABLE", "COLUMN"}:
+        return _env_int("VECTOR_TOPK_TABLE", _DEFAULT_SEARCH_LIMIT)
+    if value == "ENUM":
+        return _env_int("VECTOR_TOPK_ENUM", 8)
+    if value == "KNOWLEDGE":
+        return _env_int("VECTOR_TOPK_KNOWLEDGE", 8)
+    if value == "SQL":
+        return _env_int("VECTOR_TOPK_SQL", 5)
+    return _DEFAULT_SEARCH_LIMIT
+
+
+def _search_specs(
+        node_types: Sequence[Any] | None,
+        limit: int,
+) -> List[_CollectionSearchSpec]:
+    if node_types:
+        grouped: dict[str, list[str]] = {}
+        for node_type in node_types:
+            grouped.setdefault(collection_for_node_type(node_type), []).append(_node_type_value(node_type))
+        return [
+            _CollectionSearchSpec(
+                collection_name=collection_name,
+                node_types=tuple(types),
+                limit=limit,
+            )
+            for collection_name, types in grouped.items()
+        ]
+
+    return [
+        _CollectionSearchSpec(
+            collection_name=require_non_empty_env("VECTOR_COLLECTION_TABLE"),
+            node_types=("TABLE", "COLUMN"),
+            limit=_topk_env_for_node_type("TABLE"),
+        ),
+        _CollectionSearchSpec(
+            collection_name=require_non_empty_env("VECTOR_COLLECTION_ENUM"),
+            node_types=("ENUM",),
+            limit=_topk_env_for_node_type("ENUM"),
+        ),
+        _CollectionSearchSpec(
+            collection_name=require_non_empty_env("VECTOR_COLLECTION_KNOWLEDGE"),
+            node_types=("KNOWLEDGE",),
+            limit=_topk_env_for_node_type("KNOWLEDGE"),
+        ),
+        _CollectionSearchSpec(
+            collection_name=require_non_empty_env("VECTOR_COLLECTION_SQL"),
+            node_types=("SQL",),
+            limit=_topk_env_for_node_type("SQL"),
+        ),
+    ]
 
 
 @overload
@@ -307,7 +412,7 @@ async def semantic_search(
         workspace_id: str,
         *,
         limit: int = _DEFAULT_SEARCH_LIMIT,
-        node_types: Sequence[NodeType] | None = None,
+        node_types: Sequence[Any] | None = None,
         timeout: int | None = None,
 ) -> List[VectorSearchHit]: ...
 
@@ -317,7 +422,7 @@ async def semantic_search(
         queries: Sequence[str],
         workspace_id: str,
         limit: int = _DEFAULT_SEARCH_LIMIT,
-        node_types: Sequence[NodeType] | None = None,
+        node_types: Sequence[Any] | None = None,
         timeout: int | None = None,
 ) -> List[List[VectorSearchHit]]: ...
 
@@ -326,14 +431,10 @@ async def semantic_search(
         queries: str | Sequence[str],
         workspace_id: str,
         limit: int = _DEFAULT_SEARCH_LIMIT,
-        node_types: Sequence[NodeType] | None = None,
+        node_types: Sequence[Any] | None = None,
         timeout: int | None = None,
 ) -> List[VectorSearchHit] | List[List[VectorSearchHit]]:
-    """Embed *queries* and run COSINE ANN search in Milvus for the given workspace.
-
-    Pass a single string to get a flat hit list; pass a sequence to get one hit
-    list per query (empty query strings yield empty lists at the same index).
-    """
+    """Embed queries and run COSINE ANN search in the split Milvus collections."""
     single = isinstance(queries, str)
     query_list = _normalize_queries(queries)
 
@@ -348,14 +449,7 @@ async def semantic_search(
         return [] if single else [[] for _ in query_list]
 
     if timeout is None:
-        timeout = int(require_non_empty_env("VECTOR_TIMEOUT"))
-
-    collection_name = _get_collection_name()
-    client = get_client()
-    if not await client.has_collection(collection_name):
-        return [] if single else [[] for _ in query_list]
-
-    await client.load_collection(collection_name, timeout=timeout)
+        timeout = _get_timeout()
 
     non_empty = [q for q in query_list if q]
     if not non_empty:
@@ -365,30 +459,41 @@ async def semantic_search(
     embedding_by_text = dict(zip(non_empty, embeddings))
 
     vectors: List[List[float]] = []
-    for q in query_list:
+    vector_query_indexes: List[int] = []
+    for idx, q in enumerate(query_list):
         if q:
             vectors.append(embedding_by_text[q])
+            vector_query_indexes.append(idx)
 
-    raw = await client.search(
-        collection_name=collection_name,
-        data=vectors,
-        anns_field="vector",
-        filter=_build_semantic_search_filter(ws, node_types),
-        limit=limit,
-        output_fields=["workspace_id", "text", "node_type", "node_uuid"],
-        search_params={"metric_type": "COSINE", "params": {"ef": _DEFAULT_SEARCH_EF}},
-        timeout=timeout,
-    )
+    client = get_client()
+    combined: List[List[VectorSearchHit]] = [[] for _ in query_list]
 
-    batch_results: List[List[VectorSearchHit]] = []
-    batch_idx = 0
-    for q in query_list:
-        if not q:
-            batch_results.append([])
+    for spec in _search_specs(node_types, limit):
+        if spec.limit <= 0:
             continue
-        batch_results.append(_parse_search_batch(raw[batch_idx]))
-        batch_idx += 1
+        if not await client.has_collection(spec.collection_name):
+            continue
+
+        await client.load_collection(spec.collection_name, timeout=timeout)
+        raw = await client.search(
+            collection_name=spec.collection_name,
+            data=vectors,
+            anns_field="vector",
+            filter=_build_semantic_search_filter(ws, spec.node_types),
+            limit=spec.limit,
+            output_fields=["workspace_id", "text", "node_type", "node_uuid"],
+            search_params={"metric_type": "COSINE", "params": {"ef": _DEFAULT_SEARCH_EF}},
+            timeout=timeout,
+        )
+
+        for batch_idx, query_idx in enumerate(vector_query_indexes):
+            combined[query_idx].extend(
+                _parse_search_batch(raw[batch_idx], collection_name=spec.collection_name)
+            )
+
+    for idx, hits in enumerate(combined):
+        combined[idx] = sorted(hits, key=lambda hit: hit.distance, reverse=True)
 
     if single:
-        return batch_results[0]
-    return batch_results
+        return combined[0]
+    return combined

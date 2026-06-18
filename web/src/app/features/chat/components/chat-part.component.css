@@ -62,6 +62,136 @@
   color: #3c4043;
 }
 
+.chat-part__business {
+  padding: 0.65rem 0.75rem 0.75rem;
+  border-top: 1px solid #edf2f7;
+  background: #fff;
+  color: #334155;
+}
+
+.chat-part__business-title {
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.chat-part__business-summary {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: #334155;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-part__business-list {
+  margin: 0.45rem 0 0 1rem;
+  padding: 0;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: #475569;
+}
+
+.chat-part__business-list li + li {
+  margin-top: 0.2rem;
+}
+
+.chat-part__context-sections {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.chat-part__context-section {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.chat-part__context-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.78125rem;
+  line-height: 1.125rem;
+  font-weight: 600;
+  color: #0f172a;
+  cursor: pointer;
+  user-select: none;
+}
+
+div.chat-part__context-title {
+  cursor: default;
+}
+
+.chat-part__context-count {
+  flex-shrink: 0;
+  font-size: 0.71875rem;
+  line-height: 1rem;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.chat-part__context-list {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0 0.55rem 0.55rem;
+}
+
+.chat-part__context-item {
+  padding: 0.4rem 0.45rem;
+  border: 1px solid #e8eef5;
+  border-radius: 0.375rem;
+  background: #fff;
+  font-size: 0.78125rem;
+  line-height: 1.45;
+  color: #334155;
+  overflow-wrap: anywhere;
+}
+
+.chat-part__context-item-main {
+  color: #0f172a;
+  font-weight: 500;
+}
+
+.chat-part__context-item-sub {
+  margin-top: 0.125rem;
+  color: #475569;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-part__context-reason,
+.chat-part__context-empty {
+  margin: 0;
+  padding: 0 0.55rem 0.55rem;
+  font-size: 0.78125rem;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.chat-part__tech-details {
+  border-top: 1px solid #e8eaed;
+  background: #fbfdff;
+}
+
+.chat-part__tech-details > summary {
+  padding: 0.45rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: #64748b;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-part__tech-details .chat-part__tool-block {
+  background: #f8fafc;
+}
+
 .chat-part--data {
   border: 1px solid var(--chat-border, #e5e5e5);
   border-radius: var(--chat-radius-block, 0.75rem);
