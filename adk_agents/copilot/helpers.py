@@ -14,6 +14,7 @@ SQL_LAST_ATTEMPT_STATE_KEY = "sql_last_attempt"
 SQL_VALIDATED_SQL_STATE_KEY = "sql_validated_sql"
 SQL_GENERATION_ATTEMPT_STATE_KEY = "sql_generation_attempt"
 SQL_SELECTED_TABLE_DETAILS_STATE_KEY = "sql_selected_table_details"
+NO_USABLE_TABLE_MESSAGE = "未识别到可用数据表，请补充查询目标。"
 MAX_SQL_GENERATION_ATTEMPTS = 3
 SQL_LAST_ATTEMPT_MAX_CHARS = 12_000
 DEFAULT_SQL_EXECUTION_MAX_ROWS = 100
@@ -179,9 +180,10 @@ def save_sql_last_attempt(ctx: Context, text: str) -> None:
 def format_sql_generator_user_message(ctx: Context, node_input) -> str:
     """Schema context for sql_generator; append validation feedback on retry."""
     base = (ctx.state.get(SQL_SCHEMA_CONTEXT_STATE_KEY) or "").strip()
-    if not base:
-        base = text_from_node_input(node_input)
     allowed_tables = selected_table_names_from_state(ctx)
+    if not allowed_tables or not base:
+        return NO_USABLE_TABLE_MESSAGE
+
     if allowed_tables:
         allowed_text = "\n".join(f"- `{name}`" for name in allowed_tables)
         base = "\n".join([

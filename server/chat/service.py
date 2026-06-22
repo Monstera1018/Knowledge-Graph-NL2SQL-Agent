@@ -25,6 +25,8 @@ _STAGE_ORDER = [
     "chitchat",
     "search",
     "table_selector",
+    "route_after_table_selection",
+    "format_no_table_response",
     "load_sql_schema_context",
     "sql_generator",
     "validate_sql",
@@ -36,13 +38,15 @@ _STAGE_LABELS = {
     "chitchat": "💬 闲聊回复",
     "search": "🔎 检索上下文",
     "table_selector": "🗂️ 选择数据表",
+    "route_after_table_selection": "🧩 判断选表结果",
+    "format_no_table_response": "⚠️ 未匹配到数据表",
     "load_sql_schema_context": "🧱 汇总表结构",
     "sql_generator": "🧠 生成 SQL",
     "validate_sql": "✅ 校验 SQL",
     "format_validation_failure_response": "⚠️ SQL 修复失败",
     "execute_sql": "🚀 执行 SQL",
 }
-_TEXT_STREAM_STAGES = frozenset({"sql_generator", "chitchat"})
+_TEXT_STREAM_STAGES = frozenset({"sql_generator", "chitchat", "format_no_table_response"})
 
 
 class AdkCopilotRuntime:
@@ -229,6 +233,73 @@ def _schema_plan_payload(selection: dict[str, Any]) -> dict[str, Any]:
         "selected_table_details": table_details if isinstance(table_details, list) else [],
         "reasoning": reason if isinstance(reason, str) else "",
     }
+
+
+async def _load_selected_table_details(
+        *,
+        workspace_id: str,
+        table_names: list[str],
+) -> list[dict[str, str]]:
+    names = [str(name).strip() for name in table_names if str(name).strip()]
+    if not names:
+        return []
+
+    from tools.retrieval import load_selected_tables_bundle
+
+    bundle = await load_selected_tables_bundle(workspace_id, names)
+    detail_by_name = {
+        table.name.lower(): {
+            "name": table.name,
+            "comment": table.comment or "",
+            "description": table.description or "",
+        }
+        for table in bundle.tables
+    }
+    return [
+        detail_by_name.get(
+            name.lower(),
+            {"name": name, "comment": "", "description": ""},
+        )
+        for name in names
+    ]
+
+
+async def _enrich_table_selection_details(
+        selection: dict[str, Any],
+        *,
+        workspace_id: str,
+) -> dict[str, Any]:
+    result = dict(selection)
+    details = result.get("table_details")
+    if not isinstance(details, list):
+        details = result.get("selected_table_details")
+    if isinstance(details, list) and any(
+            isinstance(item, dict)
+            and (
+                str(item.get("comment", "")).strip()
+                or str(item.get("description", "")).strip()
+            )
+            for item in details
+    ):
+        result["table_details"] = details
+        result["selected_table_details"] = details
+        return result
+
+    tables = result.get("tables")
+    if not isinstance(tables, list):
+        tables = result.get("selected_tables")
+    if not isinstance(tables, list):
+        return result
+
+    table_names = [str(item).strip() for item in tables if str(item).strip()]
+    loaded_details = await _load_selected_table_details(
+        workspace_id=workspace_id,
+        table_names=table_names,
+    )
+    if loaded_details:
+        result["table_details"] = loaded_details
+        result["selected_table_details"] = loaded_details
+    return result
 
 
 def _enrich_table_selection(
@@ -726,6 +797,10 @@ class ChatService:
                         output["section_count"] = len(sections)
                 if stage == "table_selector":
                     parsed = _enrich_table_selection(parsed, latest_table_candidates)
+                    parsed = await _enrich_table_selection_details(
+                        parsed,
+                        workspace_id=workspace_id,
+                    )
                 output["result"] = parsed
             elif stage_text and stage not in (*_TEXT_STREAM_STAGES, "validate_sql", "execute_sql"):
                 output["summary"] = stage_text[:600]
@@ -838,6 +913,11 @@ class ChatService:
                 if not _is_table_selection_result(payload):
                     payload = latest_table_selection
                 if _is_table_selection_result(payload):
+                    if isinstance(payload, dict):
+                        payload = await _enrich_table_selection_details(
+                            payload,
+                            workspace_id=workspace_id,
+                        )
                     async for line in emit_schema_plan_part(payload):
                         yield line
 
@@ -1031,6 +1111,10 @@ class ChatService:
                 done_stages.add(active_tool_stage)
 
             if latest_table_selection is not None and not schema_plan_emitted:
+                latest_table_selection = await _enrich_table_selection_details(
+                    latest_table_selection,
+                    workspace_id=workspace_id,
+                )
                 async for line in emit_schema_plan_part(latest_table_selection):
                     yield line
 

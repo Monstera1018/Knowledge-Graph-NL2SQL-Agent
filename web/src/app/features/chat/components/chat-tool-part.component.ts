@@ -30,6 +30,8 @@ export class ChatToolPartComponent {
       extractor: '解析问题',
       search: '检索上下文',
       table_selector: '选择数据表',
+      route_after_table_selection: '判断选表结果',
+      format_no_table_response: '未匹配到数据表',
       load_sql_schema_context: '汇总表结构',
       sql_generator: '生成 SQL',
       validate_sql: '校验 SQL',
@@ -47,6 +49,8 @@ export class ChatToolPartComponent {
       extractor: '系统正在理解你的问题',
       search: '系统正在查找相关业务资料',
       table_selector: '系统正在判断需要哪些数据表',
+      route_after_table_selection: '系统正在确认是否已匹配到可用表',
+      format_no_table_response: '系统未找到可用数据表',
       load_sql_schema_context: '系统正在整理可查询的表结构',
       sql_generator: '系统正在生成查询逻辑',
       validate_sql: '系统正在检查查询是否安全可执行',
@@ -68,6 +72,12 @@ export class ChatToolPartComponent {
     }
     if (this.part().name === 'table_selector') {
       return this.tableSelectorSummary();
+    }
+    if (this.part().name === 'route_after_table_selection') {
+      return '系统已检查选表结果，若未匹配到可用表，将停止生成 SQL。';
+    }
+    if (this.part().name === 'format_no_table_response') {
+      return '本次没有识别到足够明确的数据表，已停止生成 SQL。';
     }
     if (this.part().name === 'load_sql_schema_context') {
       return this.schemaContextSummary();
@@ -141,6 +151,8 @@ export class ChatToolPartComponent {
       'extractor',
       'search',
       'table_selector',
+      'route_after_table_selection',
+      'format_no_table_response',
       'load_sql_schema_context',
       'sql_generator',
       'validate_sql',
@@ -220,6 +232,12 @@ export class ChatToolPartComponent {
     }
     if (this.part().name === 'table_selector') {
       return '正在根据检索到的表、字段、枚举值、业务知识和表关系判断应该使用哪些数据表。';
+    }
+    if (this.part().name === 'route_after_table_selection') {
+      return '正在确认选表结果是否可以进入 SQL 生成。';
+    }
+    if (this.part().name === 'format_no_table_response') {
+      return '正在整理未匹配到数据表的提示。';
     }
     if (this.part().name === 'load_sql_schema_context') {
       return '正在汇总已选表的字段清单、字段含义和表之间的关联关系。';

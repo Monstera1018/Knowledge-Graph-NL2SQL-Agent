@@ -15,7 +15,7 @@ from google.adk import Agent
 from google.adk import Context
 from google.adk import Event
 from google.adk import Workflow
-from google.adk.workflow import DEFAULT_ROUTE
+from google.adk.workflow import DEFAULT_ROUTE, Edge
 
 from adk_agents.common import (
     RetrievalExtractionResult,
@@ -31,6 +31,7 @@ from adk_agents.copilot.helpers import (
     SQL_LAST_ATTEMPT_STATE_KEY,
     SQL_VALIDATED_SQL_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
+    NO_USABLE_TABLE_MESSAGE,
     clear_state_key,
     conversation_history_for_extractor,
     format_extractor_user_message,
@@ -63,6 +64,7 @@ from tools.common import to_litellm_model_name, require_non_empty_env
 
 SQL_DIALECT = get_sql_read_dialect()
 TABLE_CANDIDATE_MAP_STATE_KEY = "table_candidate_map"
+SELECTED_TABLES_STATE_KEY = "selected_tables"
 
 _TABLE_HEADING_RE = re.compile(
     r"(?m)^-\s+\*\*([A-Za-z0-9_][A-Za-z0-9_.$]*)\*\*"
@@ -125,6 +127,22 @@ def _parse_json_objects(text: str) -> list[dict]:
         if isinstance(value, dict):
             objects.append(value)
     return objects
+
+
+def reset_sql_turn_state(ctx: Context, node_input: str) -> str:
+    """Clear SQL state that must not leak across user turns."""
+    for key in (
+            SQL_SCHEMA_CONTEXT_STATE_KEY,
+            SQL_SELECTED_TABLE_DETAILS_STATE_KEY,
+            SQL_VALIDATION_FEEDBACK_STATE_KEY,
+            SQL_LAST_ATTEMPT_STATE_KEY,
+            SQL_VALIDATED_SQL_STATE_KEY,
+            SQL_GENERATION_ATTEMPT_STATE_KEY,
+            SELECTED_TABLES_STATE_KEY,
+            TABLE_CANDIDATE_MAP_STATE_KEY,
+    ):
+        clear_state_key(ctx, key)
+    return text_from_node_input(node_input)
 
 
 def prepare_extractor_input(ctx: Context, node_input: str) -> str:
@@ -268,8 +286,25 @@ def parse_table_selection(ctx: Context, node_input) -> TableSelectionResult:
 
     result = TableSelectionResult(tables=tables, reason=reason)
     # Keep state in sync so selected_table_names_from_state() still works
-    ctx.state["selected_tables"] = {"tables": tables, "reason": reason}
+    ctx.state[SELECTED_TABLES_STATE_KEY] = {"tables": tables, "reason": reason}
     return result
+
+
+def route_after_table_selection(ctx: Context, node_input: TableSelectionResult) -> Event:
+    """Stop the SQL pipeline when no usable table was selected."""
+    if not node_input.tables:
+        return Event(route="no_tables", output=node_input)
+    return Event(output=node_input)
+
+
+def format_no_table_response(ctx: Context, node_input: TableSelectionResult) -> str:
+    reason = (node_input.reason or "").strip()
+    parts = [
+        "未识别到可用数据表，请补充查询目标。",
+    ]
+    if reason:
+        parts.extend(["", f"选表说明：{reason}"])
+    return "\n".join(parts)
 
 
 async def load_sql_schema_context(
@@ -523,7 +558,11 @@ root_agent = Workflow(
             prepare_table_selector_input,
             table_selector,
             parse_table_selection,
-            load_sql_schema_context,
+            route_after_table_selection,
+            {
+                "no_tables": format_no_table_response,
+                DEFAULT_ROUTE: load_sql_schema_context,
+            },
             prepare_sql_generator_input,
             sql_generator,
             validate_sql,
