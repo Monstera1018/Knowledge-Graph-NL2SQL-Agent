@@ -16,6 +16,18 @@ type SelectedTableDetail = {
   description?: string;
 };
 
+type TableContextGroup = {
+  tableName: string;
+  comment?: string;
+  summary?: string;
+  items: string[];
+};
+
+type KnowledgeContextGroup = {
+  title: string;
+  items: string[];
+};
+
 @Component({
   selector: 'app-chat-tool-part',
   imports: [MatIconModule, JsonPipe],
@@ -29,6 +41,7 @@ export class ChatToolPartComponent {
     const labels: Record<string, string> = {
       extractor: '解析问题',
       search: '检索上下文',
+      table_context: '确定数据表与表结构',
       table_selector: '选择数据表',
       route_after_table_selection: '判断选表结果',
       format_no_table_response: '未匹配到数据表',
@@ -48,6 +61,7 @@ export class ChatToolPartComponent {
     const titles: Record<string, string> = {
       extractor: '系统正在理解你的问题',
       search: '系统正在查找相关业务资料',
+      table_context: '系统正在确定可查询的数据表与字段结构',
       table_selector: '系统正在判断需要哪些数据表',
       route_after_table_selection: '系统正在确认是否已匹配到可用表',
       format_no_table_response: '系统未找到可用数据表',
@@ -69,6 +83,9 @@ export class ChatToolPartComponent {
     }
     if (this.part().name === 'search') {
       return this.searchSummary();
+    }
+    if (this.part().name === 'table_context') {
+      return this.schemaContextSummary() || this.tableSelectorSummary();
     }
     if (this.part().name === 'table_selector') {
       return this.tableSelectorSummary();
@@ -121,6 +138,21 @@ export class ChatToolPartComponent {
         '选表详情会在“选表结果”卡片中展示，包括表中文名、英文名和选择原因。',
       ];
     }
+    if (this.part().name === 'table_context') {
+      const details = this.tableSelectionDetails();
+      const sections = this.contextSections();
+      const items: string[] = [];
+      if (details.length) {
+        items.push(`已选择 ${details.length} 张数据表，下方展示表中文名、英文名和选表说明。`);
+      }
+      if (sections.length) {
+        items.push(`已整理 ${sections.length} 类表结构上下文，用于后续生成 SQL。`);
+      }
+      if (!items.length) {
+        items.push('正在根据检索上下文确定最终使用的数据表，并整理字段、枚举、表关系和业务知识。');
+      }
+      return items;
+    }
     if (this.part().name === 'load_sql_schema_context') {
       return this.contextSections().length
         ? [`已汇总 ${this.contextSections().length} 类表结构上下文，详情见下方分类结果。`]
@@ -150,6 +182,7 @@ export class ChatToolPartComponent {
     return [
       'extractor',
       'search',
+      'table_context',
       'table_selector',
       'route_after_table_selection',
       'format_no_table_response',
@@ -169,7 +202,7 @@ export class ChatToolPartComponent {
     if (!Array.isArray(sections)) {
       return [];
     }
-    return sections
+    const normalized = sections
       .map((item): ContextSection | null => {
         if (!item || typeof item !== 'object') {
           return null;
@@ -186,6 +219,11 @@ export class ChatToolPartComponent {
         };
       })
       .filter((item): item is ContextSection => !!item);
+
+    if (this.part().name !== 'table_context') {
+      return normalized;
+    }
+    return normalized.filter((section) => !this.isRedundantTableContextSection(section.title));
   }
 
   protected tableSelectionDetails(): SelectedTableDetail[] {
@@ -223,12 +261,114 @@ export class ChatToolPartComponent {
     return this.text(result, 'reason') || this.text(result, 'reasoning');
   }
 
+  protected isTableContextSection(section: ContextSection): boolean {
+    const normalized = this.normalizeSectionTitle(section.title);
+    return normalized === '数据表' || normalized === '库表结构(供生成SQL)';
+  }
+
+  protected isKnowledgeContextSection(section: ContextSection): boolean {
+    return this.normalizeSectionTitle(section.title) === '业务知识';
+  }
+
+  protected tableContextGroups(section: ContextSection): TableContextGroup[] {
+    const groups: TableContextGroup[] = [];
+    let current: TableContextGroup | null = null;
+
+    for (const item of section.items) {
+      if (this.isTableNameItem(item)) {
+        current = {
+          tableName: item,
+          items: [],
+        };
+        groups.push(current);
+        continue;
+      }
+
+      if (!current) {
+        current = {
+          tableName: '相关内容',
+          items: [],
+        };
+        groups.push(current);
+      }
+
+      if (this.isCommentItem(item) && !current.comment) {
+        current.comment = item.replace(/^说明[:：]\s*/, '').trim();
+        continue;
+      }
+      if (this.isSummaryItem(item) && !current.summary) {
+        current.summary = item.replace(/^摘要[:：]\s*/, '').trim();
+        continue;
+      }
+      current.items.push(item);
+    }
+
+    return groups;
+  }
+
+  protected knowledgeContextGroups(section: ContextSection): KnowledgeContextGroup[] {
+    const dedicated: string[] = [];
+    const general: string[] = [];
+
+    for (const item of section.items) {
+      if (this.isDedicatedKnowledge(item)) {
+        dedicated.push(item);
+      } else {
+        general.push(item);
+      }
+    }
+
+    return [
+      { title: `专用知识（已绑定表/字段） ${dedicated.length} 条`, items: dedicated },
+      { title: `通用知识（未绑定表字段） ${general.length} 条`, items: general },
+    ].filter((group) => group.items.length > 0);
+  }
+
+  private isRedundantTableContextSection(title: string): boolean {
+    const normalized = title.trim().replace(/\s+/g, '');
+    return ['用户问题', '选表说明', '候选表'].includes(normalized);
+  }
+
+  private normalizeSectionTitle(title: string): string {
+    return title
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/（/g, '(')
+      .replace(/）/g, ')');
+  }
+
+  private isTableNameItem(item: string): boolean {
+    const text = item.trim();
+    return /^[A-Za-z][A-Za-z0-9_.$]*$/.test(text) && text.includes('_');
+  }
+
+  private isCommentItem(item: string): boolean {
+    return /^说明[:：]/.test(item.trim());
+  }
+
+  private isSummaryItem(item: string): boolean {
+    return /^摘要[:：]/.test(item.trim());
+  }
+
+  private isDedicatedKnowledge(item: string): boolean {
+    const text = item.trim();
+    if (!text || text.includes('未绑定表字段')) {
+      return false;
+    }
+    return /(^|[^A-Za-z0-9_])dws_[A-Za-z0-9_.$]*/.test(text)
+      || text.includes('关联')
+      || /[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*/.test(text);
+  }
+
   private callSummary(): string {
     if (this.part().name === 'extractor') {
       return '正在识别问题中的地区、对象、指标和查询意图。';
     }
     if (this.part().name === 'search') {
       return '正在检索与问题相关的数据表、字段、枚举值、业务知识、历史 SQL 和表关系。';
+    }
+    if (this.part().name === 'table_context') {
+      return '正在确定最终使用的数据表，并整理生成 SQL 所需的字段、枚举、表关系和业务知识。';
     }
     if (this.part().name === 'table_selector') {
       return '正在根据检索到的表、字段、枚举值、业务知识和表关系判断应该使用哪些数据表。';

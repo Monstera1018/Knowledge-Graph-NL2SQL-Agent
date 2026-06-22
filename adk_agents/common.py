@@ -36,11 +36,10 @@ class WebSafeLiteLlm(LiteLlm):
 def get_llm_model():
     return WebSafeLiteLlm(
         model=to_litellm_model_name(require_non_empty_env("LLM_MODEL_NAME")),
-        reasoning_effort="none",
         temperature=0.0,
         enable_thinking=False,
         extra_headers={"X-AI-AccessToken": require_non_empty_env("OPENAI_API_KEY")},
-        allowed_openai_params=["reasoning_effort", "enable_thinking"],
+        allowed_openai_params=["enable_thinking"],
     )
 
 

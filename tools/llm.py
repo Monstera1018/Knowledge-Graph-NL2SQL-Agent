@@ -104,6 +104,7 @@ async def chat(
         model=to_litellm_model_name(model),
         api_base=api_base,
         api_key=api_key,
+        temperature=0.0,
         extra_headers={"X-AI-AccessToken": api_key},
         messages=messages,
     )

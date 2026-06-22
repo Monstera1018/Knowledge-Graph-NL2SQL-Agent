@@ -7,7 +7,7 @@ export interface ParsedWorkflowStep {
   subSteps?: ParsedWorkflowStep[];
 }
 
-const STEP_LINE = /^([→✅])\s+(.*)$/u;
+const STEP_LINE = /^([→✓✅])\s+(.*)$/u;
 const EMOJI_PREFIX = /^((?:\p{Extended_Pictographic}\uFE0F?\u200D?)+)\s*/u;
 
 function splitIconAndLabel(raw: string): { icon: string | null; label: string } {

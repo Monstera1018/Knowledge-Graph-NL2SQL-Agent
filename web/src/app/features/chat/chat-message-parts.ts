@@ -1,4 +1,4 @@
-import type { ArtifactPart, DataPart, MessagePart, TextPart } from '../../core/models/chat.models';
+import type { ArtifactPart, DataPart, MessagePart, TextPart, ToolPart } from '../../core/models/chat.models';
 
 const PART_ORDER = {
   workflow: 0,
@@ -16,6 +16,20 @@ const PART_ORDER = {
 } as const;
 
 const QUERY_RESULT_TEXT_RE = /(?:##|###)\s*[✅🔎📊]?\s*(?:SQL 合法性检查|查询结果)/;
+
+const TABLE_CONTEXT_TOOL_NAMES = new Set([
+  'table_selector',
+  'route_after_table_selection',
+  'format_no_table_response',
+  'load_sql_schema_context',
+]);
+
+type TableDetail = {
+  name: string;
+  comment?: string;
+  description?: string;
+  [key: string]: unknown;
+};
 
 export function isQueryResultText(part: TextPart): boolean {
   return QUERY_RESULT_TEXT_RE.test(part.text);
@@ -64,6 +78,9 @@ export function partOrderKey(part: MessagePart): number {
 
 export function shouldShowDataPart(part: DataPart, streaming = false): boolean {
   const kind = part.payload['kind'];
+  if (kind === 'schema_plan') {
+    return false;
+  }
   if (kind !== 'sql_diagnostic') {
     return true;
   }
@@ -95,6 +112,224 @@ export function shouldShowTextPart(part: TextPart, streaming = false): boolean {
 
 export function sortVisibleParts(parts: readonly MessagePart[]): MessagePart[] {
   return parts.slice().sort((left, right) => partOrderKey(left) - partOrderKey(right));
+}
+
+export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePart[] {
+  const merged: MessagePart[] = [];
+  const tableContextParts: ToolPart[] = [];
+  let tableContextIndex = -1;
+
+  for (const part of parts) {
+    if (part.kind === 'tool' && TABLE_CONTEXT_TOOL_NAMES.has(part.name)) {
+      tableContextParts.push(part);
+      const tableContext = buildTableContextPart(tableContextParts);
+      if (tableContextIndex < 0) {
+        tableContextIndex = merged.length;
+        merged.push(tableContext);
+      } else {
+        merged[tableContextIndex] = tableContext;
+      }
+      continue;
+    }
+    merged.push(part);
+  }
+
+  return merged;
+}
+
+function buildTableContextPart(parts: readonly ToolPart[]): ToolPart {
+  const first = parts[0];
+  const selector = findToolPart(parts, 'table_selector');
+  const route = findToolPart(parts, 'route_after_table_selection');
+  const noTable = findToolPart(parts, 'format_no_table_response');
+  const schema = findToolPart(parts, 'load_sql_schema_context');
+  const phase = parts.some((part) => part.phase === 'call') ? 'call' : 'result';
+
+  const selectorOutput = outputRecord(selector);
+  const routeOutput = outputRecord(route);
+  const noTableOutput = outputRecord(noTable);
+  const schemaOutput = outputRecord(schema);
+  const schemaSections = arrayValue(schemaOutput, 'sections');
+  const result = enrichSelectionResult(
+    recordValue(selectorOutput, 'result') ?? recordValue(routeOutput, 'result') ?? null,
+    schemaSections,
+  );
+
+  return {
+    kind: 'tool',
+    id: `${first.id}-table-context`,
+    name: 'table_context',
+    phase,
+    title: '确定数据表与表结构',
+    input: first.input ?? null,
+    output: {
+      stage: 'table_context',
+      status: phase === 'call' ? 'running' : 'ok',
+      result,
+      sections: schemaSections,
+      summary:
+        stringValue(schemaOutput, 'summary') ||
+        stringValue(noTableOutput, 'summary') ||
+        stringValue(noTableOutput, 'result'),
+      merged_stages: parts.map((part) => part.name),
+    },
+  };
+}
+
+function enrichSelectionResult(result: unknown, sections: readonly unknown[]): unknown {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+
+  const record = result as Record<string, unknown>;
+  const details = normalizeTableDetails(record['table_details']);
+  if (!details.length) {
+    return result;
+  }
+
+  const metaByName = extractTableMetaFromSections(sections);
+  if (!metaByName.size) {
+    return result;
+  }
+
+  let changed = false;
+  const enriched = details.map((detail) => {
+    const meta = metaByName.get(detail.name.toLowerCase());
+    if (!meta) {
+      return detail;
+    }
+    const comment = stringOrEmpty(detail.comment) || meta.comment;
+    const description = stringOrEmpty(detail.description) || meta.description;
+    if (comment !== stringOrEmpty(detail.comment) || description !== stringOrEmpty(detail.description)) {
+      changed = true;
+    }
+    return {
+      ...detail,
+      comment,
+      description,
+    };
+  });
+
+  if (!changed) {
+    return result;
+  }
+
+  return {
+    ...record,
+    table_details: enriched,
+    selected_table_details: enriched,
+  };
+}
+
+function normalizeTableDetails(value: unknown): TableDetail[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item): TableDetail | null => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const name = stringOrEmpty(record['name']);
+      if (!name) {
+        return null;
+      }
+      return {
+        ...record,
+        name,
+        comment: stringOrEmpty(record['comment']),
+        description: stringOrEmpty(record['description']),
+      };
+    })
+    .filter((item): item is TableDetail => !!item);
+}
+
+function extractTableMetaFromSections(sections: readonly unknown[]): Map<string, Pick<TableDetail, 'comment' | 'description'>> {
+  const metaByName = new Map<string, Pick<TableDetail, 'comment' | 'description'>>();
+
+  for (const section of sections) {
+    if (!section || typeof section !== 'object') {
+      continue;
+    }
+    const record = section as Record<string, unknown>;
+    const title = normalizeTitle(stringOrEmpty(record['title']));
+    if (title !== '库表结构(供生成SQL)' && title !== '数据表') {
+      continue;
+    }
+    const items = arrayValue(record, 'items').map((item) => stringOrEmpty(item)).filter(Boolean);
+    let current: TableDetail | null = null;
+    for (const item of items) {
+      const tableName = parseTableNameItem(item);
+      if (tableName) {
+        current = { name: tableName, comment: '', description: '' };
+        metaByName.set(tableName.toLowerCase(), current);
+        continue;
+      }
+      if (!current) {
+        continue;
+      }
+      const comment = parsePrefixedValue(item, '说明');
+      if (comment && !current.comment) {
+        current.comment = comment;
+        continue;
+      }
+      const description = parsePrefixedValue(item, '摘要');
+      if (description && !current.description) {
+        current.description = description;
+      }
+    }
+  }
+
+  return metaByName;
+}
+
+function parseTableNameItem(item: string): string {
+  const cleaned = item.replace(/\*\*/g, '').replace(/`/g, '').trim();
+  return /^[A-Za-z][A-Za-z0-9_.$]*$/.test(cleaned) && cleaned.includes('_') ? cleaned : '';
+}
+
+function parsePrefixedValue(item: string, label: string): string {
+  const cleaned = item.replace(/\*\*/g, '').replace(/`/g, '').trim();
+  const match = new RegExp(`^${label}[:：]\\s*(.*)$`).exec(cleaned);
+  return match?.[1]?.trim() ?? '';
+}
+
+function normalizeTitle(title: string): string {
+  return title
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+}
+
+function findToolPart(parts: readonly ToolPart[], name: string): ToolPart | undefined {
+  return parts.find((part) => part.name === name);
+}
+
+function outputRecord(part: ToolPart | undefined): Record<string, unknown> | null {
+  if (!part?.output || typeof part.output !== 'object') {
+    return null;
+  }
+  return part.output as Record<string, unknown>;
+}
+
+function recordValue(record: Record<string, unknown> | null, key: string): unknown {
+  return record?.[key];
+}
+
+function arrayValue(record: Record<string, unknown> | null, key: string): unknown[] {
+  const value = record?.[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function stringValue(record: Record<string, unknown> | null, key: string): string {
+  const value = record?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function isHorizontalRuleChunk(chunk: string): boolean {

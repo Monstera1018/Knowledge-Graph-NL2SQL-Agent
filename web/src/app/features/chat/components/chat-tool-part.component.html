@@ -44,7 +44,46 @@
                 <span>{{ section.title }}</span>
                 <span class="chat-part__context-count">{{ section.items.length }} 条</span>
               </summary>
-              @if (section.items.length) {
+              @if (isTableContextSection(section) && tableContextGroups(section).length) {
+                <div class="chat-part__table-groups">
+                  @for (group of tableContextGroups(section); track group.tableName) {
+                    <section class="chat-part__table-group">
+                      <div class="chat-part__table-head">
+                        <div class="chat-part__table-title-wrap">
+                          <div class="chat-part__table-comment">{{ group.comment || group.tableName }}</div>
+                          <div class="chat-part__table-name font-mono">{{ group.tableName }}</div>
+                        </div>
+                        @if (group.items.length) {
+                          <span class="chat-part__table-count">{{ group.items.length }} 项</span>
+                        }
+                      </div>
+                      @if (group.summary) {
+                        <p class="chat-part__table-summary">{{ group.summary }}</p>
+                      }
+                      @if (group.items.length) {
+                        <div class="chat-part__context-list chat-part__context-list--nested">
+                          @for (item of group.items; track item) {
+                            <div class="chat-part__context-item">{{ item }}</div>
+                          }
+                        </div>
+                      }
+                    </section>
+                  }
+                </div>
+              } @else if (isKnowledgeContextSection(section) && knowledgeContextGroups(section).length) {
+                <div class="chat-part__knowledge-groups">
+                  @for (group of knowledgeContextGroups(section); track group.title) {
+                    <section class="chat-part__knowledge-group">
+                      <div class="chat-part__knowledge-title">{{ group.title }}</div>
+                      <div class="chat-part__context-list chat-part__context-list--nested">
+                        @for (item of group.items; track item) {
+                          <div class="chat-part__context-item">{{ item }}</div>
+                        }
+                      </div>
+                    </section>
+                  }
+                </div>
+              } @else if (section.items.length) {
                 <div class="chat-part__context-list">
                   @for (item of section.items; track item) {
                     <div class="chat-part__context-item">{{ item }}</div>

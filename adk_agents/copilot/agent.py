@@ -57,7 +57,7 @@ from tools.db import execute_read_sql, get_sql_read_dialect, lookup_distinct_col
 from tools.retrieval import (
     build_sql_schema_context,
     load_selected_tables_bundle,
-    search_and_build_llm_context,
+    search_and_build_llm_context_with_hits,
 )
 from tools.sql import extract_sql_statements_from_text, validate_read_sql
 from tools.common import to_litellm_model_name, require_non_empty_env
@@ -65,6 +65,7 @@ from tools.common import to_litellm_model_name, require_non_empty_env
 SQL_DIALECT = get_sql_read_dialect()
 TABLE_CANDIDATE_MAP_STATE_KEY = "table_candidate_map"
 SELECTED_TABLES_STATE_KEY = "selected_tables"
+RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY = "retrieved_knowledge_uuids"
 
 _TABLE_HEADING_RE = re.compile(
     r"(?m)^-\s+\*\*([A-Za-z0-9_][A-Za-z0-9_.$]*)\*\*"
@@ -140,6 +141,7 @@ def reset_sql_turn_state(ctx: Context, node_input: str) -> str:
             SQL_GENERATION_ATTEMPT_STATE_KEY,
             SELECTED_TABLES_STATE_KEY,
             TABLE_CANDIDATE_MAP_STATE_KEY,
+            RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY,
     ):
         clear_state_key(ctx, key)
     return text_from_node_input(node_input)
@@ -213,13 +215,15 @@ async def search(
     queries = [node_input.retrieval_query, *node_input.keywords, node_input.intent]
     queries = [q for q in queries if (q or "").strip()]
 
-    retrieval_context = await search_and_build_llm_context(
+    search_result = await search_and_build_llm_context_with_hits(
         queries,
         workspace_id=workspace_id,
         limit=10,
     )
+    retrieval_context = search_result.context
     table_candidates = _extract_table_candidates(retrieval_context)
     ctx.state[TABLE_CANDIDATE_MAP_STATE_KEY] = _table_candidate_map(table_candidates)
+    ctx.state[RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY] = search_result.unbound_knowledge_hit_uuids
 
     user_message = node_input.retrieval_query
     save_user_message_to_state(ctx, user_message)
@@ -334,6 +338,11 @@ async def load_sql_schema_context(
         table_names=node_input.tables,
         user_message=resolve_user_message(ctx),
         selection_reason=node_input.reason,
+        extra_knowledge_uuids=[
+            str(item).strip()
+            for item in (ctx.state.get(RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY) or [])
+            if str(item).strip()
+        ],
     )
     ctx.state[SQL_SCHEMA_CONTEXT_STATE_KEY] = schema_text
     ctx.state[SQL_GENERATION_ATTEMPT_STATE_KEY] = 0

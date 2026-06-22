@@ -57,6 +57,12 @@ class RetrievalGraphBundle(BaseModel):
     sql: List[SqlEntry] = Field(default_factory=list)
 
 
+class RetrievalSearchResult(BaseModel):
+    context: str
+    knowledge_hit_uuids: List[str] = Field(default_factory=list)
+    unbound_knowledge_hit_uuids: List[str] = Field(default_factory=list)
+
+
 def dedupe_hits(hits: Sequence[VectorSearchHit]) -> List[VectorSearchHit]:
     best: Dict[str, VectorSearchHit] = {}
     for hit in hits:
@@ -379,6 +385,24 @@ async def _fetch_knowledge_entries(
     return sorted(grouped.values(), key=lambda x: x.name)
 
 
+async def _filter_unbound_knowledge_uuids(knowledge_uuids: Sequence[str]) -> List[str]:
+    unique = list(dict.fromkeys(uuid for uuid in knowledge_uuids if uuid))
+    if not unique:
+        return []
+
+    rows = await _run_read(
+        f"""
+        MATCH (k:{NodeType.KNOWLEDGE})
+        WHERE k.uuid IN $knowledge_uuids
+          AND NOT (k)-[:{EdgeType.DESCRIBES}]->()
+        RETURN k.uuid AS knowledge_uuid
+        """,
+        knowledge_uuids=unique,
+    )
+    found = {row["knowledge_uuid"] for row in rows}
+    return [uuid for uuid in unique if uuid in found]
+
+
 async def _fetch_sql_entries(target_uuids: List[str]) -> List[SqlEntry]:
     unique = list(dict.fromkeys(target_uuids))
     if not unique:
@@ -512,6 +536,7 @@ async def organize_graph_from_hits(hits: Sequence[VectorSearchHit]) -> Retrieval
 async def load_selected_tables_bundle(
         workspace_id: str,
         table_names: Sequence[str],
+        extra_knowledge_uuids: Sequence[str] | None = None,
 ) -> RetrievalGraphBundle:
     """Load full table → column → enum subgraph and related knowledge for selected tables."""
     names = list(dict.fromkeys((n or "").strip().lower() for n in table_names if (n or "").strip()))
@@ -531,7 +556,7 @@ async def load_selected_tables_bundle(
     anchor_uuids = list(dict.fromkeys(anchor_uuids))
 
     joins = await _fetch_joins(list(tables.keys()))
-    knowledge = await _fetch_knowledge_entries([], anchor_uuids)
+    knowledge = await _fetch_knowledge_entries(list(extra_knowledge_uuids or []), anchor_uuids)
     sql_entries = await _fetch_sql_entries(anchor_uuids)
 
     sorted_tables = sorted(tables.values(), key=lambda t: t.name)
@@ -668,9 +693,14 @@ async def build_sql_schema_context(
         *,
         user_message: str = "",
         selection_reason: str = "",
+        extra_knowledge_uuids: Sequence[str] | None = None,
 ) -> str:
     names = list(table_names)
-    bundle = await load_selected_tables_bundle(workspace_id, names)
+    bundle = await load_selected_tables_bundle(
+        workspace_id,
+        names,
+        extra_knowledge_uuids=extra_knowledge_uuids,
+    )
     return format_sql_generation_context(
         bundle,
         user_message=user_message,
@@ -690,6 +720,21 @@ async def search_and_build_llm_context(
         limit: int = 10,
         node_types: Sequence[NodeType] | None = None,
 ) -> str:
+    result = await search_and_build_llm_context_with_hits(
+        queries,
+        workspace_id=workspace_id,
+        limit=limit,
+        node_types=node_types,
+    )
+    return result.context
+
+
+async def search_and_build_llm_context_with_hits(
+        queries: str | Sequence[str],
+        workspace_id: str,
+        limit: int = 10,
+        node_types: Sequence[NodeType] | None = None,
+) -> RetrievalSearchResult:
     results = await semantic_search(
         queries,
         workspace_id,
@@ -700,4 +745,14 @@ async def search_and_build_llm_context(
         hits = [hit for batch in results for hit in batch]
     else:
         hits = list(results)
-    return await build_llm_context_from_hits(hits)
+    unique_hits = dedupe_hits(hits)
+    knowledge_hit_uuids = [
+        hit.node_uuid
+        for hit in unique_hits
+        if hit.node_type == NodeType.KNOWLEDGE
+    ]
+    return RetrievalSearchResult(
+        context=await build_llm_context_from_hits(unique_hits),
+        knowledge_hit_uuids=knowledge_hit_uuids,
+        unbound_knowledge_hit_uuids=await _filter_unbound_knowledge_uuids(knowledge_hit_uuids),
+    )

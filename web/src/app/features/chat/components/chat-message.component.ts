@@ -7,6 +7,7 @@ import {
   shouldShowArtifactPart,
   shouldShowDataPart,
   shouldShowTextPart,
+  mergeDisplayToolParts,
   sortVisibleParts,
 } from '../chat-message-parts';
 import { ChatPartComponent } from './chat-part.component';
@@ -50,6 +51,6 @@ export class ChatMessageComponent {
       }
       return true;
     });
-    return sortVisibleParts(visible);
+    return sortVisibleParts(mergeDisplayToolParts(visible));
   });
 }

@@ -48,6 +48,28 @@ _STAGE_LABELS = {
 }
 _TEXT_STREAM_STAGES = frozenset({"sql_generator", "chitchat", "format_no_table_response"})
 
+_WORKFLOW_DISPLAY_GROUPS = [
+    ("extractor", "🧭 解析问题", ("extractor",)),
+    ("search", "🔎 检索上下文", ("search",)),
+    (
+        "table_context",
+        "🧱 确定数据表与表结构",
+        (
+            "table_selector",
+            "route_after_table_selection",
+            "format_no_table_response",
+            "load_sql_schema_context",
+        ),
+    ),
+    ("sql_generator", "🧠 生成 SQL", ("sql_generator",)),
+    (
+        "validate_sql",
+        "✅ 校验 SQL",
+        ("validate_sql", "format_validation_failure_response"),
+    ),
+    ("execute_sql", "🚀 执行 SQL", ("execute_sql",)),
+]
+
 
 class AdkCopilotRuntime:
     """ADK runner wrapper for the Copilot workflow."""
@@ -235,6 +257,57 @@ def _schema_plan_payload(selection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_table_detail_list(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+
+    details: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        details.append({
+            "name": name,
+            "comment": str(item.get("comment", "")).strip(),
+            "description": str(item.get("description", "")).strip(),
+        })
+    return details
+
+
+def _collect_selected_table_names(selection: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def add(raw: Any) -> None:
+        name = str(raw).strip()
+        if not name:
+            return
+        key = name.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        names.append(name)
+
+    for key in ("tables", "selected_tables"):
+        value = selection.get(key)
+        if isinstance(value, list):
+            for item in value:
+                add(item)
+
+    for key in ("table_details", "selected_table_details"):
+        for detail in _normalize_table_detail_list(selection.get(key)):
+            add(detail["name"])
+
+    return names
+
+
 async def _load_selected_table_details(
         *,
         workspace_id: str,
@@ -270,35 +343,37 @@ async def _enrich_table_selection_details(
         workspace_id: str,
 ) -> dict[str, Any]:
     result = dict(selection)
-    details = result.get("table_details")
-    if not isinstance(details, list):
-        details = result.get("selected_table_details")
-    if isinstance(details, list) and any(
-            isinstance(item, dict)
-            and (
-                str(item.get("comment", "")).strip()
-                or str(item.get("description", "")).strip()
-            )
-            for item in details
-    ):
-        result["table_details"] = details
-        result["selected_table_details"] = details
+    table_names = _collect_selected_table_names(result)
+    if not table_names:
         return result
 
-    tables = result.get("tables")
-    if not isinstance(tables, list):
-        tables = result.get("selected_tables")
-    if not isinstance(tables, list):
-        return result
-
-    table_names = [str(item).strip() for item in tables if str(item).strip()]
+    existing_details = (
+        _normalize_table_detail_list(result.get("table_details"))
+        or _normalize_table_detail_list(result.get("selected_table_details"))
+    )
     loaded_details = await _load_selected_table_details(
         workspace_id=workspace_id,
         table_names=table_names,
     )
-    if loaded_details:
-        result["table_details"] = loaded_details
-        result["selected_table_details"] = loaded_details
+
+    existing_by_name = {item["name"].lower(): item for item in existing_details}
+    loaded_by_name = {item["name"].lower(): item for item in loaded_details}
+    merged_details: list[dict[str, str]] = []
+
+    for name in table_names:
+        key = name.lower()
+        existing = existing_by_name.get(key, {})
+        loaded = loaded_by_name.get(key, {})
+        merged_details.append({
+            "name": name,
+            "comment": existing.get("comment") or loaded.get("comment") or "",
+            "description": existing.get("description") or loaded.get("description") or "",
+        })
+
+    result["tables"] = table_names
+    result["selected_tables"] = table_names
+    result["table_details"] = merged_details
+    result["selected_table_details"] = merged_details
     return result
 
 
@@ -588,12 +663,12 @@ def _event_stage_name(event: Any) -> str:
 
 def _build_workflow_detail(active_stage: str, done_stages: set[str]) -> str:
     lines: list[str] = []
-    for stage in _STAGE_ORDER:
-        label = _STAGE_LABELS.get(stage, stage)
-        if stage in done_stages:
-            lines.append(f"✓ {label}")
-        elif stage == active_stage:
+    for _, label, stages in _WORKFLOW_DISPLAY_GROUPS:
+        stage_set = set(stages)
+        if active_stage in stage_set:
             lines.append(f"→ {label}")
+        elif stage_set & done_stages:
+            lines.append(f"✓ {label}")
     return "\n".join(lines)
 
 
