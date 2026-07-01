@@ -72,7 +72,7 @@ _WORKFLOW_DISPLAY_GROUPS = [
 
 
 class AdkCopilotRuntime:
-    """ADK runner wrapper for the Copilot workflow."""
+    """用于 Copilot 工作流的 ADK Runner 封装。"""
 
     def __init__(self) -> None:
         self.available = False
@@ -141,11 +141,11 @@ class AdkCopilotRuntime:
             session_id: str,
             workspace_id: str,
     ) -> None:
-        """Persist workspace_id into ADK session state.
+        """将 workspace_id 写入 ADK 会话状态。
 
-        ADK Workflow nodes run via ``_run_node_async`` and do not apply
-        ``run_async(state_delta=...)`` today, so agents read the default
-        workspace unless we write session state explicitly.
+        ADK Workflow 节点通过 ``_run_node_async`` 运行，目前不会应用
+        ``run_async(state_delta=...)``，因此需要显式写入会话状态，否则
+        agent 会读取默认 workspace。
         """
         from google.adk.agents.invocation_context import new_invocation_context_id
         from google.adk.events.event import Event
@@ -235,7 +235,7 @@ def _table_selection_from_event(event: Any, *, stage_text: str = "") -> dict[str
     structured = _output_to_dict(getattr(event, "output", None))
     if _is_table_selection_result(structured):
         return structured
-    parsed = _try_parse_json(stage_text)
+    parsed = _parse_table_selector_json(stage_text)
     if _is_table_selection_result(parsed):
         return parsed
     return None
@@ -385,22 +385,22 @@ def _enrich_table_selection(
     tables = result.get("tables")
     if not isinstance(tables, list):
         tables = result.get("selected_tables")
-    if not isinstance(tables, list) or not tables:
-        selected: list[str] = []
-        raw_ids = result.get("table_ids")
-        if isinstance(raw_ids, list):
-            for raw_id in raw_ids:
-                match = re.match(r"^T(\d+)$", str(raw_id).strip(), re.IGNORECASE)
-                if not match:
-                    continue
-                index = int(match.group(1)) - 1
-                if 0 <= index < len(table_candidates):
-                    table_name = table_candidates[index]
-                    if table_name and table_name not in selected:
-                        selected.append(table_name)
-        if selected:
-            result["tables"] = selected
-            result["selected_tables"] = selected
+    if not isinstance(tables, list):
+        return result
+
+    candidate_by_name = {
+        str(name).strip().lower(): str(name).strip()
+        for name in table_candidates
+        if str(name).strip()
+    }
+    selected: list[str] = []
+    for raw_table in tables:
+        table_name = candidate_by_name.get(str(raw_table).strip().lower())
+        if table_name and table_name not in selected:
+            selected.append(table_name)
+
+    result["tables"] = selected
+    result["selected_tables"] = selected
     return result
 
 
@@ -414,7 +414,7 @@ def _extract_section(text: str, heading: str) -> str:
 
 
 def _extract_context_sections(text: str) -> list[dict[str, Any]]:
-    """Parse compact Markdown context into user-facing sections."""
+    """将紧凑 Markdown 上下文解析为面向用户的分区。"""
     sections: list[dict[str, Any]] = []
     pattern = re.compile(
         r"\*\*([^*\n]+)\*\*\s*\n\n(.*?)(?=\n\n\*\*[^*\n]+\*\*|\Z)",
@@ -480,11 +480,11 @@ def _schema_plan_from_schema_context(text: str) -> dict[str, Any] | None:
 
 
 def _iter_event_text_chunks(event: Any) -> list[str]:
-    """Collect user-visible text from an ADK event.
+    """从 ADK 事件中收集用户可见文本。
 
-    LLM nodes stream via ``event.content.parts[].text``; workflow
-    ``FunctionNode`` results (e.g. ``execute_sql``) are emitted on
-    ``event.output`` instead.
+    大模型节点通过 ``event.content.parts[].text`` 流式输出；工作流
+    ``FunctionNode`` 的结果（例如 ``execute_sql``）则通过 ``event.output``
+    输出。
     """
     chunks: list[str] = []
     content = getattr(event, "content", None)
@@ -508,7 +508,7 @@ def _iter_event_text_chunks(event: Any) -> list[str]:
 
 
 def _is_sse_partial_text_event(event: Any) -> bool:
-    """True for ADK SSE streaming text chunks (event.partial is True)."""
+    """判断是否为 ADK SSE 的流式文本分片（event.partial 为 True）。"""
     if getattr(event, "partial", None) is not True:
         return False
     return bool(_iter_event_text_chunks(event))
@@ -519,14 +519,14 @@ def _coerce_event_output_dict(event: Any) -> dict[str, Any] | None:
 
 
 def _skip_sql_generator_aggregated_event(event: Any, *, got_partial: bool) -> bool:
-    """ADK SSE yields partial chunks and a final aggregated copy of the same text."""
+    """判断 ADK SSE 是否在分片后又输出了一份完整聚合文本。"""
     if not got_partial:
         return False
     return getattr(event, "partial", None) is not True
 
 
 def _should_replace_sql_stream_with_final(stage: str, event: Any, *, got_partial: bool) -> bool:
-    """Prefer the final SQL response over earlier streamed draft tokens."""
+    """在 SQL 生成阶段优先使用最终响应替换早期流式草稿。"""
     if stage != "sql_generator" or not got_partial:
         return False
     if getattr(event, "partial", None) is True:
@@ -547,7 +547,7 @@ def _extract_sql_blocks(text: str) -> list[str]:
 
 
 def _merge_stage_chunk(prev: str, chunk: str) -> str:
-    """Merge incremental or cumulative ADK chunks without duplication."""
+    """合并增量或累计式 ADK 文本分片，避免重复。"""
     if not chunk:
         return prev
     if not prev:
@@ -564,8 +564,8 @@ def _merge_stage_chunk(prev: str, chunk: str) -> str:
     for size in range(overlap, 0, -1):
         if prev[-size:] == chunk[:size]:
             return prev + chunk[size:]
-    # ADK may resend the same SQL response in a different layout after streaming
-    # tokens (e.g. headings reordered or added). Keep the streamed body.
+    # 运行时可能在流式 token 后，以不同排版重发同一份 SQL 响应。
+    # 例如调整或新增标题；此时保留已流式输出的正文。
     chunk_blocks = _extract_sql_blocks(chunk)
     if chunk_blocks and all(block in prev for block in chunk_blocks):
         return prev
@@ -588,6 +588,40 @@ def _try_parse_json(text: str) -> Any | None:
         return None
 
 
+def _parse_json_objects_from_text(text: str) -> list[dict[str, Any]]:
+    """从可能夹带说明文字的模型文本中提取有效 JSON 对象。"""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+    if "```" in cleaned:
+        cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip().rstrip("`").strip()
+
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    cursor = 0
+    while cursor < len(cleaned):
+        start = cleaned.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(cleaned[start:])
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+        cursor = start + end
+    return objects
+
+
+def _parse_table_selector_json(text: str) -> dict[str, Any] | None:
+    parsed = _try_parse_json(text)
+    if isinstance(parsed, dict):
+        return parsed
+    objects = _parse_json_objects_from_text(text)
+    return objects[-1] if objects else None
+
+
 def _split_markdown_row(line: str) -> list[str]:
     raw = line.strip()
     if not raw.startswith("|"):
@@ -599,7 +633,7 @@ def _split_markdown_row(line: str) -> list[str]:
 
 
 def _is_table_sep(line: str) -> bool:
-    # Support single- and multi-column separators, e.g. ``| --- |`` or ``| --- | --- |``.
+    # 支持单列和多列表格分隔行，例如 ``| --- |`` 或 ``| --- | --- |``。
     return bool(re.match(r"^\|(?:(?:\s*:?-{3,}:?\s*)\|)+$", line.strip()))
 
 
@@ -851,7 +885,11 @@ class ChatService:
                 return
 
             stage_text = stage_texts.get(stage, "").strip()
-            parsed = _try_parse_json(stage_text)
+            parsed = (
+                _parse_table_selector_json(stage_text)
+                if stage == "table_selector"
+                else _try_parse_json(stage_text)
+            )
             output: dict[str, Any] = {"stage": stage, "status": status}
             if stage == "validate_sql" and isinstance(latest_validate_sql, dict):
                 output["result"] = latest_validate_sql

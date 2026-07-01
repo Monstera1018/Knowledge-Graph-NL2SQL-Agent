@@ -31,7 +31,7 @@ def _user_event_text(event) -> str:
 
 
 def _is_workflow_injected_user_text(text: str) -> bool:
-    """Skip synthetic user turns added by workflow LLM nodes."""
+    """跳过工作流大模型节点注入的伪用户消息。"""
     t = text.strip()
     if t.startswith("## 用户问题"):
         return True
@@ -43,7 +43,7 @@ def _is_workflow_injected_user_text(text: str) -> bool:
 
 
 def conversation_history_for_extractor(ctx: Context, *, current_message: str) -> str:
-    """Build prior user turns from session events (excludes current input)."""
+    """从会话事件中构造历史用户轮次，不包含当前输入。"""
     session = getattr(ctx, "session", None)
     if session is None or not session.events:
         return ""
@@ -83,7 +83,7 @@ def is_non_data_query(extraction: RetrievalExtractionResult) -> bool:
 
 
 def format_extractor_user_message(*, history: str, current_message: str) -> str:
-    """Readable user turn for extractor (history + latest input)."""
+    """构造 extractor 可读的用户消息，包含历史对话和最新输入。"""
     current = (current_message or "").strip() or "（无）"
     history_text = (history or "").strip()
     if not history_text:
@@ -101,7 +101,7 @@ def format_extractor_user_message(*, history: str, current_message: str) -> str:
 
 
 def clear_state_key(ctx: Context, key: str) -> None:
-    """ADK State has no pop/del; clear a key by writing an empty string."""
+    """由于 ADK State 没有 pop/del，通过写入空字符串清理指定键。"""
     ctx.state[key] = ""
 
 
@@ -178,7 +178,7 @@ def save_sql_last_attempt(ctx: Context, text: str) -> None:
 
 
 def format_sql_generator_user_message(ctx: Context, node_input) -> str:
-    """Schema context for sql_generator; append validation feedback on retry."""
+    """构造 sql_generator 的表结构上下文；重试时追加校验反馈。"""
     base = (ctx.state.get(SQL_SCHEMA_CONTEXT_STATE_KEY) or "").strip()
     allowed_tables = selected_table_names_from_state(ctx)
     if not allowed_tables or not base:
@@ -260,7 +260,7 @@ def format_sql_execution_response(
         statements: list[str],
         result_sets: list[tuple[list[dict[str, object]], bool]],
 ) -> str:
-    """Format executed SQL and row sets as Markdown for the user."""
+    """将已执行 SQL 和结果集格式化为面向用户的 Markdown。"""
     parts: list[str] = ["## 查询结果", ""]
     for index, (sql, (rows, truncated)) in enumerate(
             zip(statements, result_sets),
@@ -286,12 +286,12 @@ def format_sql_execution_response(
 
 
 def format_table_selector_user_message(stage: SearchStageOutput) -> str:
-    """Readable user turn for table_selector (avoid ADK BaseModel → JSON dump)."""
+    """构造 table_selector 可读的用户消息，避免 ADK BaseModel 直接转储为 JSON。"""
     user_message = (stage.user_message or "").strip() or "（无）"
     retrieval_context = (stage.retrieval_context or "").strip() or "（无检索结果）"
     candidate_lines = [
-        f"- T{index}: `{table_name}`"
-        for index, table_name in enumerate(stage.table_candidates, start=1)
+        f"- `{table_name}`"
+        for table_name in stage.table_candidates
     ]
     candidates = "\n".join(candidate_lines) if candidate_lines else "（无候选表）"
     return "\n".join([
@@ -299,9 +299,11 @@ def format_table_selector_user_message(stage: SearchStageOutput) -> str:
         "",
         user_message,
         "",
-        "## 候选表编号",
+        "## 候选数据表白名单",
         "",
         candidates,
+        "",
+        "注意：只能从上述白名单中选择表名，必须逐字复制完整表名，不得改写、缩写、补全或输出相似表名。",
         "",
         "## 检索上下文",
         "",
