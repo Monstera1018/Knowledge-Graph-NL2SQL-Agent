@@ -1,4 +1,4 @@
-"""HTTP request/response models for chat routes (non-streaming)."""
+"""聊天路由的 HTTP 请求/响应模型（非流式协议）。"""
 
 from pydantic import BaseModel, Field
 

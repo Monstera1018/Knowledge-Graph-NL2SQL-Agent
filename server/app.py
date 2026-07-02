@@ -30,7 +30,7 @@ def _accepts_html(scope: dict) -> bool:
 
 
 class SpaStaticFiles(StaticFiles):
-    """Serve Angular assets and fall back to index.html for browser routes."""
+    """提供 Angular 静态资源，并在浏览器路由刷新时回退到 index.html。"""
 
     async def get_response(self, path: str, scope: dict):
         try:
@@ -67,6 +67,6 @@ app.add_middleware(
 
 register_routers(app)
 
-# API 路由注册后再挂载前端；前端浏览器路由刷新时回退到 index.html。
+# 注册 API 路由后再挂载前端；前端浏览器路由刷新时回退到 index.html。
 if _WEB_DIST.is_dir():
     app.mount("/", SpaStaticFiles(directory=_WEB_DIST, html=True), name="frontend")

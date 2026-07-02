@@ -11,7 +11,7 @@
 }
 
 /*
- * Grid 列宽动画：侧栏与主内容同步挤压，比 flex+width 更少顿挫。
+ * 使用 Grid 列宽动画：侧栏与主内容同步挤压，比 flex+width 更少顿挫。
  * 文字不做 opacity 动画，仅靠 overflow 裁剪，避免闪烁。
  */
 .shell {

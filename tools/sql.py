@@ -27,7 +27,7 @@ def is_valid_select_stmt(stmt: str, dialect: str) -> Tuple[bool, str]:
 
 
 def split_read_sql_statements(text: str, dialect: str) -> Tuple[List[str], str]:
-    """Split semicolon-separated SQL into individual read-only statements."""
+    """将分号分隔的 SQL 拆分为独立的只读语句。"""
 
     try:
         statements = [item for item in parse(text, dialect=dialect) if item is not None]
@@ -60,7 +60,7 @@ def _contains_disallowed_read_construct(sql) -> bool:
 
 
 def _collect_cte_aliases(parsed_sql) -> Set[str]:
-    """Names defined in WITH ... AS (...); not physical tables."""
+    """收集 WITH ... AS (...) 中定义的名称，这些不是物理表。"""
 
     aliases: Set[str] = set()
     for cte in parsed_sql.find_all(exp.CTE):
@@ -71,7 +71,7 @@ def _collect_cte_aliases(parsed_sql) -> Set[str]:
 
 
 def _collect_cte_table_reference_aliases(parsed_sql, cte_aliases: Set[str]) -> Set[str]:
-    """Table aliases attached to CTE references, e.g. ``FROM filtered_days f``."""
+    """收集 CTE 引用上的表别名，例如 ``FROM filtered_days f``。"""
 
     ref_aliases: Set[str] = set()
     if not cte_aliases:
@@ -132,7 +132,7 @@ def _lookup_source(start_scope: Scope, source_name: str) -> Optional[Table | Sco
 
 
 def _duplicate_table_aliases(parsed_sql) -> List[str]:
-    """Table aliases reused in the same scope (e.g. orders o JOIN detail o)."""
+    """查找同一作用域内重复使用的表别名，例如 orders o JOIN detail o。"""
 
     duplicates: List[str] = []
     seen: Set[str] = set()
@@ -187,7 +187,7 @@ def _column_reference_label(column: Column) -> str:
 
 
 def _is_timestampdiff_unit_arg(column: Column) -> bool:
-    """Skip TIMESTAMPDIFF unit tokens parsed as columns, e.g. day/hour."""
+    """跳过被解析成字段的 TIMESTAMPDIFF 单位标记，例如 day/hour。"""
     parent = getattr(column, "parent", None)
     if not isinstance(parent, exp.TimestampDiff):
         return False
@@ -208,10 +208,10 @@ def _is_timestampdiff_unit_arg(column: Column) -> bool:
 
 
 def _cte_scope_select_expr(scope: Scope):
-    """Return the first SELECT-level expression list from a CTE/subquery Scope.
+    """返回 CTE/子查询作用域中的第一组 SELECT 层表达式。
 
-    Unwraps UNION / INTERSECT / EXCEPT by following the left (``this``) branch
-    until a plain SELECT is reached.
+    对 UNION / INTERSECT / EXCEPT 沿左侧（``this``）分支逐层展开，
+    直到拿到普通 SELECT。
     """
     expr = scope.expression
     while isinstance(expr, (exp.Union, exp.Intersect, exp.Except)):
@@ -220,19 +220,18 @@ def _cte_scope_select_expr(scope: Scope):
 
 
 def _column_in_scope_sources(col_name: str, scope: Scope) -> bool:
-    """Return True when *col_name* appears in any CTE/subquery Scope source.
+    """当 *col_name* 出现在任一 CTE/子查询作用域来源中时返回 True。
 
-    This is used to avoid falsely reporting unqualified column references as
-    unresolved when they clearly originate from a CTE or derived-table source
-    in the same FROM clause — particularly when ``qualify()`` failed and column
-    references were never qualified.
+    用于避免误报未限定字段引用：当字段明显来自同一 FROM 子句中的 CTE
+    或派生表来源时，尤其是 ``qualify()`` 失败导致字段从未被限定时，
+    不应将其判定为无法解析。
     """
     col_lower = col_name.lower()
     for src in (getattr(scope, "sources", None) or {}).values():
         if not isinstance(src, Scope):
             continue
         for out_expr in _cte_scope_select_expr(src):
-            # SELECT * — conservatively treat as a potential match
+            # 遇到 SELECT * 时，保守视为潜在命中。
             if isinstance(out_expr, exp.Star):
                 return True
             if (out_expr.alias_or_name or "").lower() == col_lower:
@@ -241,11 +240,11 @@ def _column_in_scope_sources(col_name: str, scope: Scope) -> bool:
 
 
 def _is_output_alias(col_name: str, scope: Scope) -> bool:
-    """Return True when col_name matches a SELECT output alias in this scope.
+    """当 col_name 命中当前作用域的 SELECT 输出别名时返回 True。
 
-    Covers legitimate references to SELECT aliases from ORDER BY or HAVING —
-    including UNION queries where ORDER BY sits outside individual SELECT
-    branches and qualify() does not expand the alias reference.
+    覆盖 ORDER BY 或 HAVING 合法引用 SELECT 别名的情况；
+    也包括 ORDER BY 位于各 SELECT 分支之外、且 qualify() 未展开别名引用的
+    UNION 查询。
     """
     col_lower = col_name.lower()
     for out_expr in _cte_scope_select_expr(scope):
@@ -259,7 +258,7 @@ def _resolve_unqualified_column(
         scope: Scope,
         ephemeral_names: Set[str],
 ) -> Optional[List[str]]:
-    """Resolve a bare column name against physical tables in the current scope."""
+    """在当前作用域内将未限定字段名解析到物理表。"""
 
     name = (column.name or "").strip()
     if not name or name == "*":
@@ -278,11 +277,10 @@ def _resolve_unqualified_column(
     if len(unique) == 1:
         return unique
 
-    # No unambiguous physical-table match.  Skip "unresolved" reporting when
-    # the name is either:
-    #   a) a CTE/subquery output column (qualify() failed to qualify it), or
-    #   b) a SELECT output alias referenced from ORDER BY / HAVING — valid SQL
-    #      that qualify() leaves unexpanded (especially in UNION queries).
+    # 没有明确的物理表匹配时，如果名称属于以下情况，则跳过“无法解析”报告：
+    #   一、来自公共表表达式（CTE）/子查询输出字段（qualify() 未能限定它）；
+    #   二、来自排序或过滤语句引用的 SELECT 输出别名，这是合法 SQL，
+    #       其中 qualify() 可能不会展开它，尤其是在联合查询中。
     if not unique and (
         _column_in_scope_sources(name, scope) or _is_output_alias(name, scope)
     ):
@@ -311,7 +309,7 @@ def _is_qualify_table_name_mislabel(
         physical_table_names: Set[str],
         scope: Scope,
 ) -> bool:
-    """qualify may treat a table name inside a subquery as ``alias.table_name``."""
+    """处理 qualify 可能把子查询中的表名误标为 ``alias.table_name`` 的情况。"""
 
     column_name = (column.name or "").strip().lower()
     qualifier = (column.table or "").strip().lower()
@@ -339,7 +337,7 @@ def _fallback_resolve_column(
         scope: Scope,
         ephemeral_names: Set[str],
 ) -> Optional[List[str]]:
-    """Resolve ``alias.column`` when qualify/scope lookup failed."""
+    """当 qualify/作用域查找失败时解析 ``alias.column``。"""
     name = (column.name or "").strip()
     prefix = (column.table or "").strip()
     if not name or name == "*" or not prefix:
@@ -435,7 +433,7 @@ def _resolve_column_sources(
         return None
 
     if isinstance(source, Table):
-        # qualify 可能把子查询中的表名错标成其它表的列，如 ded.dwd_cst_meter_run
+        # 这里处理 qualify 可能把子查询中的表名错标成其它表字段的情况，如 ded.dwd_cst_meter_run。
         if column.name:
             alias_source = _lookup_source(scope, column.name)
             if isinstance(alias_source, (Scope, Table)):
@@ -447,16 +445,15 @@ def _resolve_column_sources(
         return [f"{physical}.{column_name}"]
 
     if isinstance(source, Scope):
-        # Cycle guard for recursive CTEs: a CTE body may reference itself.
+        # 递归 CTE 防循环：CTE 主体可能引用自身。
         visited = _visited or frozenset()
         scope_id = id(source)
         if scope_id in visited:
             return []
         visited = visited | {scope_id}
 
-        # Unwrap UNION / INTERSECT / EXCEPT — use the first SELECT branch to
-        # discover output column names.  All branches are traversed separately
-        # by traverse_scope, so physical-table columns are still tracked there.
+        # 展开 UNION / INTERSECT / EXCEPT：使用第一个 SELECT 分支发现输出列名。
+        # 所有分支仍会被 traverse_scope 单独遍历，因此物理表字段仍会被追踪。
         expressions = _cte_scope_select_expr(source)
 
         # 找出与外层列名匹配的输出项
@@ -466,7 +463,7 @@ def _resolve_column_sources(
                 target = expression.this if isinstance(expression, Alias) else expression
                 break
         if target is None:
-            # CTE/子查询投影解析在复杂表达式下可能不完整；真实缺列交给 EXPLAIN 兜底。
+            # 对 CTE/子查询投影的解析在复杂表达式下可能不完整；真实缺列交给 EXPLAIN 兜底。
             return []
 
         sub_scope = source
@@ -526,10 +523,10 @@ _SQL_CODE_BLOCK_RE = re.compile(
 
 
 def extract_sql_statements_from_text(text: str, dialect: str = "mysql") -> Tuple[List[str], str]:
-    """Extract one or more read SQL statements from model output.
+    """从模型输出中提取一条或多条只读 SQL 语句。
 
-    Supports multiple statements in a single ```sql block (semicolon-separated)
-    and multiple fenced blocks in one reply.
+    支持单个 ```sql 代码块中用分号分隔的多条语句，也支持同一回复中的多个
+    fenced 代码块。
     """
     raw = (text or "").strip()
     if not raw:
@@ -562,7 +559,7 @@ def extract_sql_statements_from_text(text: str, dialect: str = "mysql") -> Tuple
 
 
 def extract_sql_from_text(text: str, dialect: str = "mysql") -> str:
-    """First extracted SQL statement (backward compatible)."""
+    """返回提取到的第一条 SQL 语句，用于向后兼容。"""
     statements, _ = extract_sql_statements_from_text(text, dialect)
     return statements[0] if statements else ""
 
@@ -579,7 +576,7 @@ def _collect_sources_from_statements(
         statements: List[str],
         dialect: str,
 ) -> Tuple[Dict[str, List[str]] | None, List[str]]:
-    """Parse and merge table/column references from all statements."""
+    """解析并合并所有语句中的表/字段引用。"""
     errors: List[str] = []
     merged: Dict[str, List[str]] = {}
 
@@ -700,9 +697,9 @@ async def validate_read_sql(
         workspace_id: str | None = None,
         candidate_table_names: Sequence[str] | None = None,
 ) -> Tuple[bool, List[str], str]:
-    """Validate SELECT SQL: syntax, sources, and that tables/columns exist in the database.
+    """校验 SELECT SQL 的语法、来源，以及表/字段是否存在于数据库中。
 
-    Returns (ok, errors, normalized_sql).
+    返回 (ok, errors, normalized_sql)。
     """
     errors: List[str] = []
     statements, extract_err = extract_sql_statements_from_text(stmt, dialect)

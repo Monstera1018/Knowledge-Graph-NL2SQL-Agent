@@ -436,7 +436,7 @@
 }
 
 .chat-composer__input {
-  /* flex 默认 min-height:auto 会锁住扩高后的 textarea，无法缩回 */
+  /* 默认 flex min-height:auto 会锁住扩高后的 textarea，无法缩回 */
   flex: 1 1 auto;
   display: block;
   width: 0;

@@ -47,7 +47,7 @@ class SqlEntry(BaseModel):
 
 
 class RetrievalGraphBundle(BaseModel):
-    """Graph context organized by table → column → enum, plus joins / knowledge / SQL."""
+    """按表 → 字段 → 枚举组织的图谱上下文，并包含表关系、业务知识和 SQL。"""
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -88,7 +88,7 @@ def _ensure_table(
 
 
 async def _hydrate_table_meta(tables: Dict[str, _TableFocus]) -> None:
-    """Load table comment and description from the graph for every table in context."""
+    """为上下文中的每张表从图谱加载表说明和摘要。"""
     loaded = await _load_table_contexts(list(tables.keys()))
     for table_uuid, meta in loaded.items():
         table = tables[table_uuid]
@@ -143,7 +143,7 @@ async def _load_table_contexts(table_uuids: List[str]) -> Dict[str, _TableFocus]
 
 
 async def _load_full_table_subgraphs(table_uuids: List[str]) -> Dict[str, _TableFocus]:
-    """Load tables with every column and enum value from the graph."""
+    """从图谱加载表及其全部字段和枚举值。"""
     unique = list(dict.fromkeys(table_uuids))
     if not unique:
         return {}
@@ -267,7 +267,7 @@ async def _resolve_enum_parents(
 
 
 async def _resolve_target_table_refs(target_uuids: List[str]) -> Dict[str, List[str]]:
-    """Map node uuid → human-readable table refs (表名 or 表名.列名)."""
+    """将节点 uuid 映射为可读的表引用（表名或 表名.列名）。"""
     unique = list(dict.fromkeys(target_uuids))
     if not unique:
         return {}
@@ -450,7 +450,7 @@ def _relation_table_refs(relations: Sequence) -> List[str]:
 
 
 async def organize_graph_from_hits(hits: Sequence[VectorSearchHit]) -> RetrievalGraphBundle:
-    """Merge hits into a table → column → enum tree plus joins / knowledge / SQL."""
+    """将召回结果合并为表 → 字段 → 枚举树，并补充表关系、业务知识和 SQL。"""
     unique_hits = dedupe_hits(hits)
     if not unique_hits:
         return RetrievalGraphBundle()
@@ -538,7 +538,7 @@ async def load_selected_tables_bundle(
         table_names: Sequence[str],
         extra_knowledge_uuids: Sequence[str] | None = None,
 ) -> RetrievalGraphBundle:
-    """Load full table → column → enum subgraph and related knowledge for selected tables."""
+    """为已选表加载完整的表 → 字段 → 枚举子图及相关业务知识。"""
     names = list(dict.fromkeys((n or "").strip().lower() for n in table_names if (n or "").strip()))
     if not names:
         return RetrievalGraphBundle()
@@ -607,7 +607,7 @@ def _section_block(label: str, body_lines: List[str]) -> str:
 
 
 def format_graph_context_for_llm(bundle: RetrievalGraphBundle) -> str:
-    """Format the retrieval bundle as compact Markdown (lists + bold, no heading stack)."""
+    """将检索包格式化为紧凑 Markdown（列表 + 加粗，不堆叠多级标题）。"""
     if not (
             bundle.tables
             or bundle.joins
@@ -666,7 +666,7 @@ def format_sql_generation_context(
         selection_reason: str = "",
         selected_tables: Sequence[str] | None = None,
 ) -> str:
-    """Markdown schema context for SQL generation from candidate tables."""
+    """根据候选表构造 SQL 生成使用的 Markdown 表结构上下文。"""
     header_parts: List[str] = []
 
     if user_message.strip():

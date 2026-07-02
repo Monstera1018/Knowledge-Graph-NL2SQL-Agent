@@ -122,7 +122,7 @@ async def emit_progress(
 
 
 class CliProgressRenderer:
-    """CLI 进度渲染：单条 tqdm，postfix 明确显示当前表/列名称。"""
+    """命令行进度渲染：单条 tqdm，postfix 明确显示当前表/列名称。"""
 
     def __init__(self, stage: ImportStage) -> None:
         self._bar = tqdm.tqdm(

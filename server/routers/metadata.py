@@ -43,7 +43,7 @@ from server.auth.deps import get_workspace_id
 from tools.graph.model import ColumnNode, EnumListItem, EnumNode, KnowledgeNode, SQLNode, TableNode
 
 # ---------------------------------------------------------------------------
-# Schemas
+# 数据模型
 # ---------------------------------------------------------------------------
 
 class TableJoinRelationBody(BaseModel):
@@ -195,7 +195,7 @@ def _assert_workspace(node, workspace_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Routers
+# 路由
 # ---------------------------------------------------------------------------
 
 tables_router = APIRouter(prefix="/api/tables", tags=["tables"])

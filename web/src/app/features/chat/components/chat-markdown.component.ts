@@ -107,7 +107,7 @@ export class ChatMarkdownComponent {
               '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
           }, 1600);
         } catch {
-          /* ignore */
+          /* 忽略剪贴板写入失败 */
         }
       });
 

@@ -260,7 +260,7 @@ def unique_texts_for_vector_upsert(
         *,
         collection_name: str,
 ) -> List[str]:
-    """Drop blank texts and duplicates that share the same Milvus primary key."""
+    """去除空文本，以及 Milvus 主键相同的重复文本。"""
     seen_ids: set[str] = set()
     unique: List[str] = []
     for text in texts:
@@ -434,7 +434,7 @@ async def semantic_search(
         node_types: Sequence[Any] | None = None,
         timeout: int | None = None,
 ) -> List[VectorSearchHit] | List[List[VectorSearchHit]]:
-    """Embed queries and run COSINE ANN search in the split Milvus collections."""
+    """对查询文本做向量化，并在拆分后的 Milvus 集合中执行 COSINE ANN 检索。"""
     single = isinstance(queries, str)
     query_list = _normalize_queries(queries)
 

@@ -60,7 +60,7 @@ def _node_label(node: dict) -> str:
 
 
 async def get_node_subgraph_snapshot(workspace_id: str, node_uuid: str, depth: int = 1) -> GraphSnapshot:
-    """Return focus node, all nodes within ``depth`` hops, and every edge between those nodes."""
+    """返回焦点节点、``depth`` 跳内的所有节点，以及这些节点之间的所有边。"""
     depth = max(1, min(depth, 2))
     rows = await _run_read(
         f"""

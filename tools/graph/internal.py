@@ -13,7 +13,7 @@ _graph_uuid_constraints_ensured = False
 
 
 def _get_graph_schema_namespace() -> uuid.UUID:
-    """Resolve the UUID namespace lazily so importing graph helpers is cheap."""
+    """懒加载 UUID 命名空间，降低导入图谱工具的成本。"""
     return uuid.uuid5(
         uuid.NAMESPACE_DNS,
         require_non_empty_env("GRAPH_SCHEMA_NS"),
@@ -25,7 +25,7 @@ def _get_graph_database() -> str:
 
 
 def get_graph_driver() -> AsyncDriver:
-    """Return a Neo4j async driver bound to the current event loop."""
+    """返回绑定当前事件循环的 Neo4j 异步驱动。"""
     global _driver
 
     if _driver is None:
@@ -40,7 +40,7 @@ def get_graph_driver() -> AsyncDriver:
 
 
 async def close_graph_driver() -> None:
-    """Close the singleton driver (call once on application shutdown)."""
+    """关闭单例图谱驱动，应用关闭时调用一次。"""
     global _driver
     if _driver is not None:
         await _driver.close()
@@ -91,9 +91,9 @@ async def _run_read(query: str, **params: Any) -> List[dict[str, Any]]:
 
 
 async def _ensure_graph_uuid_constraints() -> None:
-    """Apply uuid uniqueness constraints in a dedicated transaction.
+    """在独立事务中应用 uuid 唯一性约束。
 
-    Neo4j forbids mixing schema modifications with data writes in one transaction.
+    Neo4j 不允许在同一个事务中混合 schema 修改和数据写入。
     """
     global _graph_uuid_constraints_ensured
     if _graph_uuid_constraints_ensured:
@@ -126,7 +126,7 @@ async def create_graph_node_tx(
         transaction: AsyncTransaction | AsyncManagedTransaction,
         node: BaseNode,
 ) -> None:
-    """Create a node; raise ConflictError if uuid already exists."""
+    """创建节点；如果 uuid 已存在则抛出 ConflictError。"""
     await _ensure_graph_uuid_constraints()
     label = node.type.value
     try:
@@ -144,7 +144,7 @@ async def upsert_graph_node_tx(
         transaction: AsyncTransaction | AsyncManagedTransaction,
         node: BaseNode,
 ):
-    """Merge node by uuid; create if missing, merge properties if present."""
+    """按 uuid 合并节点；不存在则创建，存在则合并属性。"""
     label = node.type.value
 
     return await transaction.run(
@@ -196,7 +196,7 @@ async def commit_graph_then_vectors(
         vector_sync,
         compensate_graph=None,
 ) -> Any:
-    """Run graph write, then vector sync; compensate graph if vector sync fails."""
+    """先写入图谱再同步向量；向量同步失败时补偿图谱写入。"""
     result = await _run_write(graph_work)
     try:
         await vector_sync(result)

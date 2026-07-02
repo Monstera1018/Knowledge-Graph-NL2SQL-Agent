@@ -1,4 +1,4 @@
-/* ChatGPT-like design tokens (scoped under .chat-page) */
+/* 类 ChatGPT 的设计变量，作用域限定在 .chat-page 下 */
 .chat-page {
   --chat-bg: #ffffff;
   --chat-surface: #f7f7f8;

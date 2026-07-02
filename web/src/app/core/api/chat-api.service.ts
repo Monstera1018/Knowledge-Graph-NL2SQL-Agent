@@ -16,7 +16,7 @@ export class ChatApiService {
     return this.http.get<AgentListResponse>('/api/chat/agents');
   }
 
-  /** POST + SSE; each emission is one parsed protocol event. */
+  /** 使用 POST + SSE；每次发射一个已解析的协议事件。 */
   streamMessage(sessionId: string, body: SendMessageRequest): Observable<StreamEvent> {
     return new Observable((subscriber) => {
       const controller = new AbortController();
@@ -48,7 +48,7 @@ export class ChatApiService {
                 detail = errBody.detail;
               }
             } catch {
-              /* ignore */
+              /* 忽略错误响应解析失败 */
             }
             subscriber.error(new Error(detail));
             return;

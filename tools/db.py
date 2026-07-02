@@ -20,8 +20,7 @@ _metadata_lookup_timeout_s = float(require_non_empty_env("DATABASE_LOOKUP_TIMEOU
 
 
 def _get_sqlalchemy_uri() -> str:
-    """Resolve an async SQLAlchemy database URL from the environment.
-    """
+    """从环境变量解析异步 SQLAlchemy 数据库连接地址。"""
 
     direct = os.environ.get("DATABASE_URL", "").strip()
     if direct:
@@ -58,10 +57,10 @@ def _uri_implies_sqlite(uri: str) -> bool:
 
 
 def get_database_backend() -> DatabaseBackend:
-    """Resolve physical DB backend for metadata queries and EXPLAIN.
+    """解析物理数据库类型，用于元数据查询和 EXPLAIN。
 
-    ``DATABASE_BACKEND`` may be ``mysql``, ``sqlite``, or empty (auto-detect
-    from ``DATABASE_URL`` / ``DATABASE_DRIVER``).
+    ``DATABASE_BACKEND`` 可以是 ``mysql``、``sqlite`` 或留空；留空时根据
+    ``DATABASE_URL`` / ``DATABASE_DRIVER`` 自动判断。
     """
 
     override = os.environ.get("DATABASE_BACKEND", "").strip().lower()
@@ -86,9 +85,9 @@ def _require_safe_sql_ident(name: str, *, kind: str) -> str:
 
 
 def get_sql_read_dialect() -> str:
-    """Dialect for LLM SQL generation and sqlglot validation.
+    """大模型生成 SQL 和 sqlglot 校验使用的 SQL 方言。
 
-    ``SQL_READ_DIALECT`` overrides auto-detection from ``DATABASE_BACKEND``.
+    ``SQL_READ_DIALECT`` 会覆盖基于 ``DATABASE_BACKEND`` 的自动判断。
     """
 
     override = os.environ.get("SQL_READ_DIALECT", "").strip().lower()
@@ -104,10 +103,10 @@ def prepare_sql_for_physical_db(
         *,
         read_dialect: str | None = None,
 ) -> str:
-    """Adapt SQL before hitting the configured physical database.
+    """访问已配置的物理数据库前，按需适配 SQL。
 
-    When read dialect differs from the physical backend (e.g. legacy MySQL
-    SQL against SQLite), transpile before EXPLAIN/execute.
+    当读取方言与物理后端不一致时，例如使用旧 MySQL SQL 访问 SQLite，
+    在 EXPLAIN/执行前先转换方言。
     """
 
     statement = (sql or "").strip()
@@ -132,12 +131,12 @@ def prepare_sql_for_physical_db(
 
 
 def _engine_connect_args(uri: str) -> dict:
-    """Connection pool kwargs for ``create_async_engine``.
+    """构造 ``create_async_engine`` 使用的连接池参数。
 
-    ``pool_pre_ping`` is disabled for aiomysql/asyncmy: SQLAlchemy 2.0 calls
-    ``ping()`` without the required ``reconnect`` arg on those adapters
-    (see sqlalchemy/sqlalchemy#13306). ``pool_recycle`` still retires stale
-    connections before MySQL ``wait_timeout``.
+    对 aiomysql/asyncmy 禁用 ``pool_pre_ping``：SQLAlchemy 2.0 在这些适配器上
+    调用 ``ping()`` 时不会传入必需的 ``reconnect`` 参数
+    （见 sqlalchemy/sqlalchemy#13306）。``pool_recycle`` 仍会在 MySQL
+    ``wait_timeout`` 前回收陈旧连接。
     """
 
     kwargs = {"pool_recycle": 3600}
@@ -160,7 +159,7 @@ def get_engine() -> AsyncEngine:
 
 
 async def close_sql_engine() -> None:
-    """Dispose the singleton engine (call once on application shutdown)."""
+    """释放单例数据库引擎，应用关闭时调用一次。"""
     global _engine
     if _engine is not None:
         await _engine.dispose()
@@ -176,7 +175,7 @@ async def list_physical_table_columns(
         schema: str | None = None,
         timeout_s: float = _default_query_timeout_s,
 ) -> list[str]:
-    """Column names for a physical table (MySQL INFORMATION_SCHEMA or SQLite PRAGMA)."""
+    """查询物理表字段名，MySQL 使用 INFORMATION_SCHEMA，SQLite 使用 PRAGMA。"""
 
     table = (table_name or "").strip()
     if not table:
@@ -224,7 +223,7 @@ async def resolve_physical_table_name(
         schema: str | None = None,
         timeout_s: float = _metadata_lookup_timeout_s,
 ) -> str | None:
-    """Return TABLE_NAME as stored in the database, or None if the table does not exist."""
+    """返回数据库中实际存储的表名；表不存在时返回 None。"""
 
     name = (table_name or "").strip()
     if not name:
@@ -277,7 +276,7 @@ async def list_columns_for_physical_table(
         schema: str | None = None,
         timeout_s: float = _metadata_lookup_timeout_s,
 ) -> tuple[str | None, list[str]]:
-    """Resolve table name in the database and return (actual_name, column_names)."""
+    """解析数据库中的实际表名，并返回（实际表名，字段名列表）。"""
 
     resolved = await resolve_physical_table_name(table_name, schema=schema, timeout_s=timeout_s)
     if not resolved:
@@ -291,7 +290,7 @@ async def list_columns_for_physical_table(
 
 
 def format_db_error_message(exc: Exception) -> str:
-    """Extract a concise MySQL/SQLAlchemy error message for display."""
+    """提取简短的 MySQL/SQLAlchemy 错误信息用于展示。"""
 
     message = str(exc).strip()
     match = _MYSQL_ERR_MESSAGE_RE.search(message)
@@ -307,7 +306,7 @@ async def explain_read_sql_statements(
         *,
         timeout_s: float | None = None,
 ) -> list[str]:
-    """Run EXPLAIN on each statement; return human-readable errors (empty if all ok)."""
+    """对每条语句执行 EXPLAIN；全部通过时返回空列表，否则返回可读错误。"""
 
     normalized = [(statement or "").strip() for statement in statements]
     normalized = [statement for statement in normalized if statement]
@@ -348,7 +347,7 @@ async def explain_read_sql_statements(
 
 
 def _quote_sql_identifier(name: str, dialect: str) -> str:
-    """Return a safely quoted SQL identifier for the given dialect."""
+    """按指定方言返回安全引用后的 SQL 标识符。"""
     if dialect == "sqlite":
         return '"' + name.replace('"', '""') + '"'
     return "`" + name.replace("`", "``") + "`"
@@ -362,10 +361,10 @@ async def lookup_distinct_column_values(
         timeout_s: float | None = None,
         read_dialect: str | None = None,
 ) -> tuple[list[str], bool]:
-    """Return (values, truncated) of distinct non-null values for a column.
+    """返回指定字段的非空去重值及是否被截断。
 
-    *values* is a list of string representations; *truncated* is True when
-    there were more than *limit* distinct values.
+    返回值中的 *values* 是字符串形式的值列表；当去重值数量超过 *limit* 时，
+    返回值中的 *truncated* 为 True。
     """
     table = (table_name or "").strip()
     col = (column_name or "").strip()
@@ -376,7 +375,7 @@ async def lookup_distinct_column_values(
     qt = _quote_sql_identifier(table, dialect)
     qc = _quote_sql_identifier(col, dialect)
 
-    # Fetch one extra row to detect truncation
+    # 多取一行用于判断结果是否被截断。
     sql = (
         f"SELECT DISTINCT {qc} AS _lookup_val "
         f"FROM {qt} "
@@ -404,7 +403,7 @@ async def execute_read_sql(
         *,
         timeout_s: float | None = None,
 ) -> list[dict[str, object]]:
-    """Run a read query and return rows as plain dicts."""
+    """执行只读查询，并以普通 dict 列表返回结果行。"""
 
     statement = (sql or "").strip()
     if not statement:
