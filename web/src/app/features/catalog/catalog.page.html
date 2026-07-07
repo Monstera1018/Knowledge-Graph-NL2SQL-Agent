@@ -13,7 +13,7 @@
     </button>
   </header>
 
-  <div class="workbench__body">
+  <div class="workbench__body catalog-workbench__body">
     <!-- 表列表 -->
     <section class="workbench__pane">
       <div class="workbench__pane-head">
@@ -256,109 +256,188 @@
               <header class="detail-card__header">
                 <div class="detail-card__identity">
                   <span class="detail-card__badge detail-card__badge--table">表</span>
-                  <h2 class="detail-card__title">{{ selectedTable()!.name }}</h2>
-                  @if (selectedTable()!.comment) {
-                    <p class="detail-card__subtitle">{{ selectedTable()!.comment }}</p>
-                  }
+                  <h2 class="detail-card__title detail-card__title--business">
+                    {{ selectedTable()!.comment || '未命名数据表' }}
+                  </h2>
+                  <p
+                    class="detail-card__subtitle detail-card__subtitle--mono"
+                    [appTruncateTooltip]="selectedTable()!.name"
+                  >
+                    {{ selectedTable()!.name }}
+                  </p>
                 </div>
                 <div class="detail-card__toolbar">
-                  <button type="button" class="app-btn" (click)="startEditTable()">
+                  <button
+                    type="button"
+                    class="app-btn app-btn--icon"
+                    aria-label="编辑表"
+                    title="编辑"
+                    (click)="startEditTable()"
+                  >
                     <mat-icon>edit</mat-icon>
-                    编辑
                   </button>
                   <button
                     type="button"
-                    class="app-btn app-btn--danger"
+                    class="app-btn app-btn--icon app-btn--danger"
+                    aria-label="删除表"
+                    title="删除"
                     (click)="deleteTable()"
                   >
                     <mat-icon>delete_outline</mat-icon>
-                    删除
                   </button>
                   <span class="detail-card__toolbar-divider" aria-hidden="true"></span>
                   <button
                     type="button"
-                    class="app-btn app-btn--accent"
+                    class="app-btn app-btn--icon app-btn--accent"
+                    aria-label="查看关系图谱"
+                    title="关系图谱"
                     (click)="openGraphView(selectedTable()!.uuid)"
                   >
                     <mat-icon>hub</mat-icon>
-                    关系图谱
                   </button>
                 </div>
               </header>
 
-              <dl class="detail-metrics detail-metrics--4">
-                <div class="detail-metrics__item">
-                  <dt class="detail-metrics__label">列</dt>
-                  <dd class="detail-metrics__value">{{ overviewStats().columns }}</dd>
+              <dl class="catalog-summary">
+                <div class="catalog-summary__item">
+                  <dt>列</dt>
+                  <dd>{{ overviewStats().columns }}</dd>
                 </div>
-                <div class="detail-metrics__item">
-                  <dt class="detail-metrics__label">关联表</dt>
-                  <dd class="detail-metrics__value">{{ overviewStats().relatedTables }}</dd>
+                <div class="catalog-summary__item">
+                  <dt>关联表</dt>
+                  <dd>{{ overviewStats().relatedTables }}</dd>
                 </div>
-                <div class="detail-metrics__item">
-                  <dt class="detail-metrics__label">关联知识</dt>
-                  <dd class="detail-metrics__value">{{ overviewStats().knowledge }}</dd>
+                <div class="catalog-summary__item">
+                  <dt>业务知识</dt>
+                  <dd>{{ overviewStats().knowledge }}</dd>
                 </div>
-                <div class="detail-metrics__item">
-                  <dt class="detail-metrics__label">引用 SQL</dt>
-                  <dd class="detail-metrics__value">{{ overviewStats().sql }}</dd>
+                <div class="catalog-summary__item">
+                  <dt>引用 SQL</dt>
+                  <dd>{{ overviewStats().sql }}</dd>
                 </div>
               </dl>
 
-              <section class="detail-card__section detail-desc">
-                <h3 class="detail-card__section-title">业务描述</h3>
-                @if (!hasDescription()) {
-                  <div class="detail-desc__empty">
-                    <p class="detail-desc__empty-text">暂无业务描述</p>
-                  </div>
-                } @else {
-                  <div class="detail-desc__body detail-desc__body--scroll">
-                    {{ selectedTable()!.description }}
-                  </div>
-                }
-              </section>
+              <nav class="detail-tabs" aria-label="表详情">
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'overview'"
+                  (click)="selectTableDetailTab('overview')"
+                >
+                  概览
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'relations'"
+                  (click)="selectTableDetailTab('relations')"
+                >
+                  关联表
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'knowledge'"
+                  (click)="selectTableDetailTab('knowledge')"
+                >
+                  业务知识
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'sql'"
+                  (click)="selectTableDetailTab('sql')"
+                >
+                  引用 SQL
+                </button>
+              </nav>
 
-              <section class="detail-card__section catalog-joins">
-                <h3 class="detail-card__section-title">表间关系</h3>
-                @if (joinRelationsLoading()) {
-                  <div class="detail-placeholder detail-placeholder--loading">
-                    <mat-spinner diameter="22" />
-                  </div>
-                } @else if (tableJoinRelations().length === 0) {
-                  <div class="detail-placeholder">暂无与其它表的关联，可点击「编辑」维护</div>
-                } @else {
-                  <ul class="catalog-joins__list">
-                    @for (relation of tableJoinRelations(); track relation.from_table_uuid + relation.to_table_uuid) {
-                      @let meta = joinRelationLabel(selectedTable()!.name, relation);
-                      <li class="catalog-join-card">
-                        <div class="catalog-join-card__head">
-                          <span class="catalog-join-card__role">{{ meta.role }}</span>
-                          <span class="catalog-join-card__arrow" aria-hidden="true">{{ meta.arrow }}</span>
-                          <span class="catalog-join-card__peer">
-                            <mat-icon>table_chart</mat-icon>
-                            <span
-                              class="catalog-join-card__peer-line"
-                              [appTruncateTooltip]="joinRelationPeerTooltip(meta)"
-                            >
-                              <span class="catalog-join-card__peer-name">{{ meta.peer }}</span>
-                              @if (meta.peerComment) {
-                                <span class="catalog-join-card__peer-comment"> — {{ meta.peerComment }}</span>
-                              }
+              @if (tableDetailTab() === 'overview') {
+                <section class="detail-card__section detail-desc">
+                  <h3 class="detail-card__section-title">业务描述</h3>
+                  @if (!hasDescription()) {
+                    <div class="detail-desc__empty">
+                      <p class="detail-desc__empty-text">暂无业务描述</p>
+                    </div>
+                  } @else {
+                    <div class="detail-desc__body detail-desc__body--scroll">
+                      {{ selectedTable()!.description }}
+                    </div>
+                  }
+                </section>
+              } @else if (tableDetailTab() === 'relations') {
+                <section class="detail-card__section catalog-joins">
+                  <h3 class="detail-card__section-title">表间关系</h3>
+                  @if (joinRelationsLoading()) {
+                    <div class="detail-placeholder detail-placeholder--loading">
+                      <mat-spinner diameter="22" />
+                    </div>
+                  } @else if (tableJoinRelations().length === 0) {
+                    <div class="detail-placeholder">暂无与其它表的关联，可点击「编辑」维护</div>
+                  } @else {
+                    <ul class="catalog-joins__list">
+                      @for (relation of tableJoinRelations(); track relation.from_table_uuid + relation.to_table_uuid) {
+                        @let meta = joinRelationLabel(selectedTable()!.name, relation);
+                        <li class="catalog-join-card">
+                          <div class="catalog-join-card__head">
+                            <span class="catalog-join-card__role">{{ meta.role }}</span>
+                            <span class="catalog-join-card__arrow" aria-hidden="true">{{ meta.arrow }}</span>
+                            <span class="catalog-join-card__peer">
+                              <mat-icon>table_chart</mat-icon>
+                              <span
+                                class="catalog-join-card__peer-line"
+                                [appTruncateTooltip]="joinRelationPeerTooltip(meta)"
+                              >
+                                <span class="catalog-join-card__peer-name">{{ meta.peer }}</span>
+                                @if (meta.peerComment) {
+                                  <span class="catalog-join-card__peer-comment"> — {{ meta.peerComment }}</span>
+                                }
+                              </span>
                             </span>
-                          </span>
-                        </div>
-                        @if ((relation.condition || '').trim()) {
-                          <pre class="catalog-join-card__condition">{{ relation.condition }}</pre>
-                        } @else {
-                          <p class="catalog-join-card__condition catalog-join-card__condition--empty">
-                            未填写关联条件
-                          </p>
-                        }
-                      </li>
-                    }
-                  </ul>
-                }
-              </section>
+                          </div>
+                          @if ((relation.condition || '').trim()) {
+                            <pre class="catalog-join-card__condition">{{ relation.condition }}</pre>
+                          } @else {
+                            <p class="catalog-join-card__condition catalog-join-card__condition--empty">
+                              未填写关联条件
+                            </p>
+                          }
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              } @else if (tableDetailTab() === 'knowledge') {
+                <section class="detail-card__section">
+                  <h3 class="detail-card__section-title">关联业务知识</h3>
+                  @if (overviewKnowledgeNodes().length === 0) {
+                    <div class="detail-placeholder">暂无关联业务知识</div>
+                  } @else {
+                    <ul class="catalog-detail-list">
+                      @for (node of overviewKnowledgeNodes(); track node.uuid) {
+                        <li class="catalog-detail-list__item">
+                          <span class="catalog-detail-list__name">{{ node.label }}</span>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              } @else {
+                <section class="detail-card__section">
+                  <h3 class="detail-card__section-title">引用 SQL</h3>
+                  @if (overviewSqlNodes().length === 0) {
+                    <div class="detail-placeholder">暂无引用 SQL</div>
+                  } @else {
+                    <ul class="catalog-detail-list">
+                      @for (node of overviewSqlNodes(); track node.uuid) {
+                        <li class="catalog-detail-list__item">
+                          <span class="catalog-detail-list__name">{{ node.label }}</span>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              }
             }
           </article>
 

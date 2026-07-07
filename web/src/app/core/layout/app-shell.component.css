@@ -1,7 +1,7 @@
 :host {
   display: block;
   height: 100%;
-  --sidebar-expanded-width: 17.5rem;
+  --sidebar-expanded-width: 12rem;
   --sidebar-rail-width: 3.25rem;
   --rail-item-size: 2.5rem;
   --rail-icon-size: 1.25rem;

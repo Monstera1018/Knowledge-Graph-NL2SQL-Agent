@@ -1,15 +1,20 @@
 .chat-markdown {
   display: block;
+  min-width: 0;
   width: 100%;
+  max-width: 100%;
   font-size: 1rem;
   line-height: 1.75;
   color: var(--chat-text, #0d0d0d);
-  word-break: break-word;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .chat-markdown markdown {
   display: block;
+  min-width: 0;
   width: 100%;
+  max-width: 100%;
 }
 
 .chat-markdown :is(p, ul, ol, blockquote, table) {

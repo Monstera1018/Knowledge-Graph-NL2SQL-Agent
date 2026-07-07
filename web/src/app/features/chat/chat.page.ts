@@ -39,10 +39,10 @@ const SUGGESTIONS = [
   '帮我写一段查询客户维表的 SQL',
 ];
 
-/** 与 .chat-composer__input 的 min-height 一致 */
+/** 与 .chat-composer__input 的 min-height 保持一致 */
 const COMPOSER_MIN_HEIGHT = '2rem';
 const SCROLL_STICK_THRESHOLD_PX = 120;
-/** Idle timeout: reset on each SSE event so long SQL + retries are not cut off. */
+/** SSE 空闲超时：每次收到事件都会刷新，避免长 SQL 或重试被过早中断 */
 const STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 function finalizeAssistantTurn(
@@ -87,9 +87,14 @@ export class ChatPage {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly threadEl = viewChild<ElementRef<HTMLElement>>('thread');
+  private readonly threadInnerEl = viewChild<ElementRef<HTMLElement>>('threadInner');
+  private readonly threadBottomEl = viewChild<ElementRef<HTMLElement>>('threadBottom');
   private readonly chatInputEl = viewChild<ElementRef<HTMLTextAreaElement>>('chatInput');
   private stickToBottom = true;
   private scrollScheduled = false;
+  private pageHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  private syncBottomOnVisible = false;
+  private threadResizeObserver: ResizeObserver | null = null;
 
   protected readonly agents = signal<AgentDescriptor[]>([]);
   protected readonly agentsLoading = signal(true);
@@ -125,7 +130,11 @@ export class ChatPage {
   constructor() {
     this.sessionId = this.loadOrCreateSessionId();
 
-    afterNextRender(() => this.applyComposerHeight());
+    afterNextRender(() => {
+      this.applyComposerHeight();
+      this.setupPageVisibilitySync();
+      this.setupThreadResizeObserver();
+    });
 
     effect(() => {
       this.draft();
@@ -298,6 +307,9 @@ export class ChatPage {
           if (this.stickToBottom) {
             this.scheduleThreadScrollToBottom();
           }
+          if (this.pageHidden && this.stickToBottom) {
+            this.syncBottomOnVisible = true;
+          }
           if (event.type === 'turn_end') {
             turnEnded = true;
           }
@@ -341,15 +353,104 @@ export class ChatPage {
     });
   }
 
+  private scheduleThreadScrollToBottomAfterLayout(): void {
+    if (this.scrollScheduled) {
+      return;
+    }
+    this.scrollScheduled = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        this.scrollScheduled = false;
+        if (!this.stickToBottom) {
+          return;
+        }
+        this.scrollThreadToBottom();
+        this.onThreadScroll();
+      });
+    });
+  }
+
   private scrollThreadToBottom(): void {
     const el = this.threadEl()?.nativeElement;
     if (!el) {
       return;
     }
+    const bottom = this.threadBottomEl()?.nativeElement;
+    if (bottom) {
+      bottom.scrollIntoView({ block: 'end', behavior: 'auto' });
+      return;
+    }
     el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
   }
 
-  /** 等 DOM 与 ngModel 同步后再测量（发送清空必须走这里） */
+  /** 页面从后台恢复后重新校准滚动位置 */
+  private setupPageVisibilitySync(): void {
+    const handleVisibleAgain = () => {
+      this.pageHidden = false;
+      this.recalibrateThreadAfterVisibilityReturn();
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        this.pageHidden = true;
+        this.syncBottomOnVisible = this.stickToBottom || this.sending();
+        return;
+      }
+      handleVisibleAgain();
+    };
+
+    const onFocus = () => {
+      if (!this.pageHidden) {
+        this.recalibrateThreadAfterVisibilityReturn();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onFocus);
+    this.destroyRef.onDestroy(() => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
+    });
+  }
+
+  private setupThreadResizeObserver(): void {
+    const inner = this.threadInnerEl()?.nativeElement;
+    if (!inner || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+
+    this.threadResizeObserver = new ResizeObserver(() => {
+      if (this.pageHidden) {
+        if (this.stickToBottom || this.sending()) {
+          this.syncBottomOnVisible = true;
+        }
+        return;
+      }
+
+      if (this.stickToBottom) {
+        this.scheduleThreadScrollToBottomAfterLayout();
+        return;
+      }
+      requestAnimationFrame(() => this.onThreadScroll());
+    });
+    this.threadResizeObserver.observe(inner);
+    this.destroyRef.onDestroy(() => this.threadResizeObserver?.disconnect());
+  }
+
+  private recalibrateThreadAfterVisibilityReturn(): void {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.syncBottomOnVisible || this.stickToBottom) {
+          this.scrollToBottom();
+        } else {
+          this.onThreadScroll();
+        }
+        this.syncBottomOnVisible = false;
+      });
+    });
+  }
+
+  /** 等 DOM 与 ngModel 同步后再测量，发送清空输入框也要走这里 */
   private scheduleComposerResize(): void {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => this.applyComposerHeight());

@@ -42,6 +42,7 @@ import {
 } from './catalog.utils';
 
 type CatalogDetailView = 'detail' | 'graph';
+type TableDetailTab = 'overview' | 'relations' | 'knowledge' | 'sql';
 
 @Component({
   selector: 'app-catalog-page',
@@ -90,6 +91,7 @@ export class CatalogPage {
   protected readonly enumDraft = signal('');
   protected readonly enumFormSaving = signal(false);
   protected readonly detailView = signal<CatalogDetailView>('detail');
+  protected readonly tableDetailTab = signal<TableDetailTab>('overview');
   protected readonly tableOverviewSnapshot = signal<GraphSnapshot | null>(null);
   protected readonly graphSnapshot = signal<GraphSnapshot | null>(null);
   protected readonly graphLoading = signal(false);
@@ -123,6 +125,14 @@ export class CatalogPage {
     const description = this.selectedTable()?.description?.trim() ?? '';
     return description.length > 0;
   });
+
+  protected readonly overviewKnowledgeNodes = computed(() =>
+    this.tableOverviewSnapshot()?.nodes.filter((node) => node.type === 'KNOWLEDGE') ?? [],
+  );
+
+  protected readonly overviewSqlNodes = computed(() =>
+    this.tableOverviewSnapshot()?.nodes.filter((node) => node.type === 'SQL') ?? [],
+  );
 
   private refreshSpinTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly tablesGuard = createRequestGuard();
@@ -211,6 +221,7 @@ export class CatalogPage {
     this.selectedColumn.set(null);
     this.enums.set([]);
     this.detailView.set('detail');
+    this.tableDetailTab.set('overview');
     this.graphDepth.set(1);
     this.columnQuery.set('');
     this.fetchColumns(table.uuid);
@@ -234,6 +245,7 @@ export class CatalogPage {
     this.columnsTotal.set(0);
     this.enums.set([]);
     this.detailView.set('detail');
+    this.tableDetailTab.set('overview');
     this.tableFormDraft.set(emptyTableForm());
     this.tableFormMode.set('create');
   }
@@ -589,6 +601,10 @@ export class CatalogPage {
 
   protected closeGraphView(): void {
     this.detailView.set('detail');
+  }
+
+  protected selectTableDetailTab(tab: TableDetailTab): void {
+    this.tableDetailTab.set(tab);
   }
 
   protected onGraphDepthChange(depth: number): void {

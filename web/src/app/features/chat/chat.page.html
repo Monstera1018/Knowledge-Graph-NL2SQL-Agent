@@ -74,78 +74,79 @@
   <div class="chat-body">
     <div class="chat-main">
       <div class="chat-thread" #thread (scroll)="onThreadScroll()">
-      <div class="chat-thread__inner">
-        @if (!hasMessages()) {
-          <section class="chat-welcome">
-            <h1 class="chat-welcome__title">有什么可以帮你的？</h1>
-            <div class="chat-suggestions">
-              @for (item of suggestions; track item) {
-                <button
-                  type="button"
-                  class="chat-suggestion"
-                  (click)="useSuggestion(item)"
-                  [disabled]="sending()"
-                >
-                  {{ item }}
-                </button>
-              }
-            </div>
-          </section>
-        } @else {
-          @for (msg of messages(); track msg.id) {
-            <app-chat-message [message]="msg" />
-          }
-        }
-      </div>
-    </div>
-
-    @if (showScrollDown()) {
-      <button
-        type="button"
-        class="chat-scroll-down"
-        (click)="scrollToBottom()"
-        aria-label="回到底部"
-      >
-        <mat-icon>arrow_downward</mat-icon>
-      </button>
-    }
-
-    <footer class="chat-composer-wrap">
-      <div class="chat-composer-shell">
-        <div class="chat-composer">
-          <button type="button" class="chat-composer__attach" disabled aria-hidden="true" tabindex="-1">
-            <mat-icon>add</mat-icon>
-          </button>
-          <label class="sr-only" for="chat-input">输入消息</label>
-          <textarea
-            #chatInput
-            id="chat-input"
-            class="chat-composer__input"
-            placeholder="有问题，尽管问"
-            [ngModel]="draft()"
-            (ngModelChange)="onDraftChange($event)"
-            (input)="onComposerInput()"
-            (keydown)="onComposerKeydown($event)"
-            [disabled]="agentsLoading() || !selectedAgentId()"
-          ></textarea>
-          <button
-            type="button"
-            class="chat-composer__send"
-            (click)="send()"
-            [disabled]="sending() || !draft().trim() || !selectedAgentId()"
-            [class.is-active]="draft().trim().length > 0"
-            aria-label="发送"
-          >
-            @if (sending()) {
-              <mat-spinner diameter="20" />
-            } @else {
-              <mat-icon>arrow_upward</mat-icon>
+        <div class="chat-thread__inner" #threadInner>
+          @if (!hasMessages()) {
+            <section class="chat-welcome">
+              <h1 class="chat-welcome__title">有什么可以帮你的？</h1>
+              <div class="chat-suggestions">
+                @for (item of suggestions; track item) {
+                  <button
+                    type="button"
+                    class="chat-suggestion"
+                    (click)="useSuggestion(item)"
+                    [disabled]="sending()"
+                  >
+                    {{ item }}
+                  </button>
+                }
+              </div>
+            </section>
+          } @else {
+            @for (msg of messages(); track msg.id) {
+              <app-chat-message [message]="msg" />
             }
-          </button>
+          }
+          <div class="chat-thread__bottom" #threadBottom aria-hidden="true"></div>
         </div>
-        <p class="chat-composer__hint">智能体可能会犯错，重要信息请在元数据目录中核对。</p>
       </div>
-    </footer>
+
+      @if (showScrollDown()) {
+        <button
+          type="button"
+          class="chat-scroll-down"
+          (click)="scrollToBottom()"
+          aria-label="回到底部"
+        >
+          <mat-icon>arrow_downward</mat-icon>
+        </button>
+      }
+
+      <footer class="chat-composer-wrap">
+        <div class="chat-composer-shell">
+          <div class="chat-composer">
+            <button type="button" class="chat-composer__attach" disabled aria-hidden="true" tabindex="-1">
+              <mat-icon>add</mat-icon>
+            </button>
+            <label class="sr-only" for="chat-input">输入消息</label>
+            <textarea
+              #chatInput
+              id="chat-input"
+              class="chat-composer__input"
+              placeholder="有问题，尽管问"
+              [ngModel]="draft()"
+              (ngModelChange)="onDraftChange($event)"
+              (input)="onComposerInput()"
+              (keydown)="onComposerKeydown($event)"
+              [disabled]="agentsLoading() || !selectedAgentId()"
+            ></textarea>
+            <button
+              type="button"
+              class="chat-composer__send"
+              (click)="send()"
+              [disabled]="sending() || !draft().trim() || !selectedAgentId()"
+              [class.is-active]="draft().trim().length > 0"
+              aria-label="发送"
+            >
+              @if (sending()) {
+                <mat-spinner diameter="20" />
+              } @else {
+                <mat-icon>arrow_upward</mat-icon>
+              }
+            </button>
+          </div>
+          <p class="chat-composer__hint">智能体可能会犯错，重要信息请在元数据目录中核对。</p>
+        </div>
+      </footer>
     </div>
   </div>
 

@@ -291,6 +291,10 @@
   box-sizing: border-box;
 }
 
+.chat-thread__bottom {
+  height: 1px;
+}
+
 /* —— 空状态 —— */
 .chat-welcome {
   display: flex;
