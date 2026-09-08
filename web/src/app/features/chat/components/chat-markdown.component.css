@@ -1,3 +1,10 @@
+app-chat-markdown {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 .chat-markdown {
   display: block;
   min-width: 0;

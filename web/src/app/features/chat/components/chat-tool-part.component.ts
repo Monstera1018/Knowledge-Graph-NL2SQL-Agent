@@ -1,5 +1,5 @@
 import { JsonPipe } from '@angular/common';
-import { Component, input } from '@angular/core';
+import { Component, input, signal } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 
 import type { ToolPart } from '../../../core/models/chat.models';
@@ -36,6 +36,28 @@ type KnowledgeContextGroup = {
 })
 export class ChatToolPartComponent {
   readonly part = input.required<ToolPart>();
+  private readonly expandedSearchContextSections = signal<ReadonlySet<string>>(new Set());
+
+  protected isContextSectionExpanded(section: ContextSection): boolean {
+    return this.part().name !== 'search' || this.expandedSearchContextSections().has(section.title);
+  }
+
+  protected onContextSectionToggle(section: ContextSection, event: Event): void {
+    if (this.part().name !== 'search') {
+      return;
+    }
+
+    const details = event.currentTarget as HTMLDetailsElement;
+    this.expandedSearchContextSections.update((current) => {
+      const next = new Set(current);
+      if (details.open) {
+        next.add(section.title);
+      } else {
+        next.delete(section.title);
+      }
+      return next;
+    });
+  }
 
   protected stageLabel(): string {
     const labels: Record<string, string> = {

@@ -47,6 +47,7 @@ _STAGE_LABELS = {
     "execute_sql": "🚀 执行 SQL",
 }
 _TEXT_STREAM_STAGES = frozenset({"sql_generator", "chitchat", "format_no_table_response"})
+_BUFFERED_TEXT_STAGES = frozenset({"sql_generator"})
 
 _WORKFLOW_DISPLAY_GROUPS = [
     ("extractor", "🧭 解析问题", ("extractor",)),
@@ -482,28 +483,39 @@ def _schema_plan_from_schema_context(text: str) -> dict[str, Any] | None:
 def _iter_event_text_chunks(event: Any) -> list[str]:
     """从 ADK 事件中收集用户可见文本。
 
-    大模型节点通过 ``event.content.parts[].text`` 流式输出；工作流
-    ``FunctionNode`` 的结果（例如 ``execute_sql``）则通过 ``event.output``
-    输出。
+    大模型节点通过 ``event.content.parts[].text`` 输出；其中 ``thought=True``
+    是模型思考过程，不能发送给前端。工作流 ``FunctionNode`` 的结果（例如
+    ``execute_sql``）则通过 ``event.output`` 输出。
     """
     chunks: list[str] = []
+    content_text = ""
     content = getattr(event, "content", None)
     if content is not None:
         parts = getattr(content, "parts", None)
         if parts:
-            for part in parts:
-                text = getattr(part, "text", None)
-                if text:
-                    chunks.append(str(text))
+            content_text = "".join(
+                str(text)
+                for part in parts
+                if not getattr(part, "thought", False)
+                and (text := getattr(part, "text", None))
+            )
+            if content_text:
+                chunks.append(content_text)
+
     output = getattr(event, "output", None)
+    output_text = ""
     if isinstance(output, str) and output:
-        chunks.append(output)
+        output_text = output
     elif isinstance(output, dict):
-        chunks.append(json.dumps(output, ensure_ascii=False))
+        output_text = json.dumps(output, ensure_ascii=False)
     else:
         structured = _output_to_dict(output)
         if structured is not None:
-            chunks.append(json.dumps(structured, ensure_ascii=False))
+            output_text = json.dumps(structured, ensure_ascii=False)
+
+    # LLM Agent 的最终事件可能同时把相同正文放在 content 和 output 中。
+    if output_text and output_text != content_text:
+        chunks.append(output_text)
     return chunks
 
 
@@ -525,11 +537,22 @@ def _skip_sql_generator_aggregated_event(event: Any, *, got_partial: bool) -> bo
     return getattr(event, "partial", None) is not True
 
 
-def _should_replace_sql_stream_with_final(stage: str, event: Any, *, got_partial: bool) -> bool:
-    """在 SQL 生成阶段优先使用最终响应替换早期流式草稿。"""
-    if stage != "sql_generator" or not got_partial:
+def _is_final_response_event(event: Any) -> bool:
+    """判断事件是否为当前 Agent 的最终答案。"""
+    checker = getattr(event, "is_final_response", None)
+    if callable(checker):
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+    return getattr(event, "partial", None) is not True
+
+
+def _should_replace_sql_stream_with_final(stage: str, event: Any) -> bool:
+    """SQL 生成阶段仅在最终答案到达时发布用户可见正文。"""
+    if stage != "sql_generator":
         return False
-    if getattr(event, "partial", None) is True:
+    if not _is_final_response_event(event):
         return False
     return bool(_iter_event_text_chunks(event))
 
@@ -546,10 +569,12 @@ def _extract_sql_blocks(text: str) -> list[str]:
     ]
 
 
-def _merge_stage_chunk(prev: str, chunk: str) -> str:
-    """合并增量或累计式 ADK 文本分片，避免重复。"""
+def _merge_stage_chunk(prev: str, chunk: str, *, incremental: bool = False) -> str:
+    """合并 ADK 文本；增量事件必须逐字追加，避免吞掉重复字符。"""
     if not chunk:
         return prev
+    if incremental:
+        return prev + chunk
     if not prev:
         return chunk
     if chunk == prev:
@@ -806,6 +831,7 @@ class ChatService:
         text_stream_stage = ""
         text_stream_open = False
         text_stream_got_partial = False
+        buffered_text_ready = False
         latest_validate_sql: dict[str, Any] | None = None
         latest_table_selection: dict[str, Any] | None = None
         latest_table_candidates: list[str] = []
@@ -834,6 +860,8 @@ class ChatService:
         async def emit_text_stream_stage() -> AsyncIterator[str]:
             nonlocal emitted
             if not text_stream_stage:
+                return
+            if text_stream_stage in _BUFFERED_TEXT_STAGES and not buffered_text_ready:
                 return
             full = stage_texts.get(text_stream_stage, "")
             sent = stage_sent_len.get(text_stream_stage, 0)
@@ -1105,6 +1133,7 @@ class ChatService:
                         text_stream_stage = stage
                         text_stream_open = True
                         text_stream_got_partial = False
+                        buffered_text_ready = False
                     workflow_detail = _build_workflow_detail(active_stage, done_stages)
                     yield sse_line(StreamEvent(
                         type=StreamEventType.PART_DELTA,
@@ -1151,13 +1180,13 @@ class ChatService:
                     and _should_replace_sql_stream_with_final(
                         stage,
                         event,
-                        got_partial=text_stream_got_partial,
                     )
                 )
 
                 if replace_sql_stream_with_final:
                     stage_texts[stage] = ""
                     stage_sent_len[stage] = 0
+                    buffered_text_ready = True
                     yield sse_line(StreamEvent(
                         type=StreamEventType.PART_DELTA,
                         session_id=session_id,
@@ -1193,6 +1222,7 @@ class ChatService:
                         stage_texts[stage] = _merge_stage_chunk(
                             stage_texts.get(stage, ""),
                             chunk,
+                            incremental=_is_sse_partial_text_event(event),
                         )
                         if (
                             stage in _TEXT_STREAM_STAGES

@@ -70,6 +70,13 @@
   gap: 0.5rem;
 }
 
+.chat-message__body app-chat-part {
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 .chat-message__thinking {
   display: flex;
   gap: 0.35rem;
