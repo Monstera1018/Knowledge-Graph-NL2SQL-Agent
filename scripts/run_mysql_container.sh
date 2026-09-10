@@ -5,10 +5,15 @@ PROJECT_NAME="TYWS"
 CONTAINER_NAME="${CONTAINER_NAME:-${PROJECT_NAME}_DB}"
 MYSQL_IMAGE="${MYSQL_IMAGE:-mysql:8.4.7-oraclelinux9}"
 MYSQL_PORT="${MYSQL_PORT:-13307}"
-MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-${PROJECT_NAME}_root_129}"
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-${PROJECT_NAME}}"
 MYSQL_USER="${MYSQL_USER:-dev}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-${PROJECT_NAME}_dev_129}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-}"
+
+if [ -z "${MYSQL_ROOT_PASSWORD}" ] || [ -z "${MYSQL_PASSWORD}" ]; then
+  echo "Error: set MYSQL_ROOT_PASSWORD and MYSQL_PASSWORD before running this script" >&2
+  exit 1
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Error: docker is not installed or not in PATH" >&2

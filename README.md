@@ -173,7 +173,7 @@ TYWS_SQL        SQL
 GRAPH_DATABASE=neo4j
 GRAPH_URI=neo4j://localhost:17688
 GRAPH_USER=neo4j
-GRAPH_PASSWORD=REMOVED_DEVELOPMENT_PASSWORD
+GRAPH_PASSWORD=替换为你的 Neo4j 密码
 GRAPH_SCHEMA_NS=TYWS.NS
 ```
 
@@ -186,7 +186,7 @@ GRAPH_SCHEMA_NS=TYWS.NS
 本地 SQLite 示例配置：
 
 ```env
-DATABASE_URL=sqlite+aiosqlite:///C:/Users/your-name/Desktop/大模型相关资料/通用问数-产品化/开发代码/TYWS/data/dev.sqlite
+DATABASE_URL=sqlite+aiosqlite:///C:/path/to/TYWS/data/dev.sqlite
 DATABASE_BACKEND=sqlite
 SQL_READ_DIALECT=sqlite
 ```
@@ -448,13 +448,14 @@ data/auth/users.json
 data/auth/user_workspaces.json
 ```
 
-默认账号：
+首次克隆后，先从模板创建本地账号文件：
 
-```text
-用户名：admin
-密码：admin
-默认 workspace：default
+```powershell
+Copy-Item data\auth\users.example.json data\auth\users.json
+Copy-Item data\auth\user_workspaces.example.json data\auth\user_workspaces.json
 ```
+
+然后修改 `data/auth/users.json` 中的本地用户名和密码。账号文件包含明文密码，已通过 `.gitignore` 排除，禁止提交。
 
 初始化脚本默认写入 workspace：
 
@@ -462,7 +463,7 @@ data/auth/user_workspaces.json
 default
 ```
 
-因此使用 `admin/admin` 登录后可以访问初始化后的问数数据。
+账号的 `default_workspace_id` 保持为 `default` 后，可以访问初始化后的问数数据。
 
 ## 前端页面
 

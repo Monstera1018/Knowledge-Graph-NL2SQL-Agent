@@ -1,0 +1,11 @@
+{
+  "memberships": [
+    {
+      "user_id": "local-admin",
+      "workspace_ids": [
+        "default"
+      ],
+      "default_workspace_id": "default"
+    }
+  ]
+}

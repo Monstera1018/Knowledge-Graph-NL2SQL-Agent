@@ -7,7 +7,12 @@ NEO4J_IMAGE="${NEO4J_IMAGE:-neo4j:ubi10}"
 NEO4J_HTTP_PORT="${NEO4J_HTTP_PORT:-17475}"
 NEO4J_BOLT_PORT="${NEO4J_BOLT_PORT:-17688}"
 NEO4J_USER="${NEO4J_USER:-neo4j}"
-NEO4J_PASSWORD="${NEO4J_PASSWORD:-${PROJECT_NAME}_dev_129}"
+NEO4J_PASSWORD="${NEO4J_PASSWORD:-}"
+
+if [ -z "${NEO4J_PASSWORD}" ]; then
+  echo "Error: set NEO4J_PASSWORD before running this script" >&2
+  exit 1
+fi
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "Error: docker is not installed or not in PATH" >&2
