@@ -71,6 +71,11 @@ export class ChatToolPartComponent {
       sql_generator: '生成 SQL',
       validate_sql: '校验 SQL',
       execute_sql: '执行 SQL',
+      chart_analysis: '分析图表',
+      prepare_chart_planner_input: '分析图表',
+      chart_planner: '分析图表',
+      parse_chart_spec: '分析图表',
+      format_no_chart_snapshot_response: '分析图表',
     };
     return labels[this.part().name] || this.part().title || this.part().name;
   }
@@ -91,6 +96,7 @@ export class ChatToolPartComponent {
       sql_generator: '系统正在生成查询逻辑',
       validate_sql: '系统正在检查查询是否安全可执行',
       execute_sql: '系统正在查询数据',
+      chart_analysis: '系统正在规划图表',
     };
     return titles[this.part().name] || '系统正在处理该步骤';
   }
@@ -129,6 +135,9 @@ export class ChatToolPartComponent {
     }
     if (this.part().name === 'execute_sql') {
       return this.executeSqlSummary();
+    }
+    if (this.part().name === 'chart_analysis') {
+      return this.chartAnalysisSummary();
     }
 
     return '该步骤已处理完成。';
@@ -196,6 +205,10 @@ export class ChatToolPartComponent {
     if (this.part().name === 'execute_sql') {
       return ['SQL 已提交到业务数据库执行，查询结果会在下方结果区域展示。'];
     }
+    if (this.part().name === 'chart_analysis') {
+      const summary = this.chartAnalysisSummary();
+      return summary ? [summary] : ['已根据上一轮查询结果规划图表。'];
+    }
 
     return [];
   }
@@ -212,6 +225,7 @@ export class ChatToolPartComponent {
       'sql_generator',
       'validate_sql',
       'execute_sql',
+      'chart_analysis',
     ].includes(this.part().name);
   }
 
@@ -413,6 +427,9 @@ export class ChatToolPartComponent {
     if (this.part().name === 'execute_sql') {
       return '正在执行业务查询并整理返回结果。';
     }
+    if (this.part().name === 'chart_analysis') {
+      return '正在根据检索信息和当前查询结果选择分析维度与图表类型。';
+    }
     return '正在处理该步骤。';
   }
 
@@ -502,6 +519,18 @@ export class ChatToolPartComponent {
       return '查询执行失败，请查看技术详情中的错误信息。';
     }
     return '查询执行步骤已完成。';
+  }
+
+  private chartAnalysisSummary(): string {
+    const output = this.outputObject();
+    const summary = this.text(output, 'summary');
+    if (summary) {
+      return summary;
+    }
+    if (output?.['status'] === 'ok') {
+      return '已根据检索信息和当前查询结果选定分析维度与图表类型。';
+    }
+    return '正在根据上一轮查询结果规划图表。';
   }
 
   private outputObject(): Record<string, unknown> | null {

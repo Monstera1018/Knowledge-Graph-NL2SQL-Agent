@@ -31,26 +31,36 @@ from adk_agents.copilot.helpers import (
     SQL_LAST_ATTEMPT_STATE_KEY,
     SQL_VALIDATED_SQL_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
+    EXTRACTOR_TASK_CHART,
+    EXTRACTOR_TASK_CHITCHAT,
     NO_USABLE_TABLE_MESSAGE,
     clear_state_key,
     conversation_history_for_extractor,
     format_extractor_user_message,
-    is_non_data_query,
     format_sql_execution_response,
     format_sql_generator_user_message,
     save_sql_last_attempt,
     format_table_selector_user_message,
+    load_query_snapshot,
+    resolve_extractor_task,
     resolve_user_message,
     resolve_workspace_id,
     selected_table_names_from_state,
+    save_query_snapshot,
     save_user_message_to_state,
     sql_execution_max_rows,
     text_from_node_input,
 )
 from adk_agents.copilot.prompts import (
     CHITCHAT_INSTRUCTION,
+    CHART_PLANNER_INSTRUCTION,
     build_sql_generator_instruction,
     TABLE_SELECTOR_INSTRUCTION,
+)
+from adk_agents.copilot.chart import (
+    NO_CHART_SNAPSHOT_MESSAGE,
+    format_chart_planner_user_message,
+    materialize_chart_spec,
 )
 from adk_agents.extractor.agent import root_agent as extractor
 from tools.db import execute_read_sql, get_sql_read_dialect, lookup_distinct_column_values
@@ -161,6 +171,7 @@ def parse_extractor_output(ctx: Context, node_input) -> RetrievalExtractionResul
     retrieval_query = ""
     keywords: list[str] = []
     intent = ""
+    task = ""
     try:
         data = json.loads(cleaned)
         if isinstance(data, dict):
@@ -169,6 +180,7 @@ def parse_extractor_output(ctx: Context, node_input) -> RetrievalExtractionResul
             if isinstance(raw_kw, list):
                 keywords = [str(k).strip() for k in raw_kw if str(k).strip()]
             intent = str(data.get("intent", "")).strip()
+            task = str(data.get("task", "")).strip()
     except (json.JSONDecodeError, ValueError):
         pass
 
@@ -176,13 +188,17 @@ def parse_extractor_output(ctx: Context, node_input) -> RetrievalExtractionResul
         retrieval_query=retrieval_query,
         keywords=keywords,
         intent=intent,
+        task=task,
     )
 
 
 def route_after_extractor(ctx: Context, node_input: RetrievalExtractionResult) -> Event:
-    """将非问数闲聊从检索和 SQL 链路中分流出去。"""
-    if is_non_data_query(node_input):
+    """按 extractor 的 task 分流：闲聊、按需出图、或默认问数。"""
+    task = resolve_extractor_task(node_input, resolve_user_message(ctx))
+    if task == EXTRACTOR_TASK_CHITCHAT:
         return Event(route="chitchat", output=node_input)
+    if task == EXTRACTOR_TASK_CHART:
+        return Event(route="chart", output=node_input)
     return Event(output=node_input)
 
 
@@ -198,6 +214,37 @@ chitchat = Agent(
     description="处理与数据分析无关的闲聊，并引导用户回到问数场景。",
     instruction=CHITCHAT_INSTRUCTION,
 )
+
+
+def prepare_chart_planner_input(ctx: Context, node_input: RetrievalExtractionResult) -> Event:
+    """没有上一轮查询快照时直接提示用户先问数，否则构造图表规划输入。"""
+    snapshot = load_query_snapshot(ctx)
+    if not snapshot:
+        return Event(route="no_snapshot", output=node_input)
+    message = format_chart_planner_user_message(
+        user_request=resolve_user_message(ctx),
+        snapshot=snapshot,
+    )
+    return Event(output=message)
+
+
+def format_no_chart_snapshot_response(ctx: Context, node_input=None) -> str:
+    return NO_CHART_SNAPSHOT_MESSAGE
+
+
+chart_planner = Agent(
+    model=get_llm_model(),
+    name="chart_planner",
+    description="根据检索上下文和已有查询结果规划图表维度与类型。",
+    instruction=CHART_PLANNER_INSTRUCTION,
+)
+
+
+def parse_chart_spec(ctx: Context, node_input) -> str:
+    """校验模型输出的图表 JSON，并基于快照结果集聚合出可绑定数据。"""
+    snapshot = load_query_snapshot(ctx)
+    payload = materialize_chart_spec(text_from_node_input(node_input), snapshot)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 async def search(
@@ -523,6 +570,7 @@ async def execute_sql(ctx: Context, node_input) -> str:
             rows = rows[:max_rows]
         result_sets.append((rows, truncated))
 
+    save_query_snapshot(ctx, result_sets)
     return format_sql_execution_response(statements, result_sets)
 
 
@@ -537,12 +585,21 @@ root_agent = Workflow(
             route_after_extractor,
             {
                 "chitchat": prepare_chitchat_input,
+                "chart": prepare_chart_planner_input,
                 DEFAULT_ROUTE: search,
             },
         ),
         (
             prepare_chitchat_input,
             chitchat,
+        ),
+        (
+            prepare_chart_planner_input,
+            {
+                "no_snapshot": format_no_chart_snapshot_response,
+                DEFAULT_ROUTE: chart_planner,
+            },
+            parse_chart_spec,
         ),
         (
             search,

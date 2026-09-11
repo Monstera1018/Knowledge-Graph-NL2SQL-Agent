@@ -1,6 +1,9 @@
+import json
 import os
+import re
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from google.adk import Context
 
@@ -20,6 +23,15 @@ SQL_LAST_ATTEMPT_MAX_CHARS = 12_000
 DEFAULT_SQL_EXECUTION_MAX_ROWS = 100
 EXTRACTOR_USER_HISTORY_MAX_TURNS = 5
 NON_DATA_QUERY_INTENT = "非数据查询"
+EXTRACTOR_TASK_QUERY = "query"
+EXTRACTOR_TASK_CHART = "chart"
+EXTRACTOR_TASK_CHITCHAT = "chitchat"
+QUERY_SNAPSHOT_STATE_KEY = "query_snapshot"
+QUERY_SNAPSHOT_MAX_CONTEXT_CHARS = 8_000
+_CHART_REQUEST_RE = re.compile(
+    r"(画(个|一张)?图|生成图表|出(个|一张)?图|可视化|柱状图|折线图|饼图|趋势图|统计图|换成饼图|换成柱状图|换成折线图|看(一下)?趋势)",
+)
+_DATA_QUERY_RE = re.compile(r"(查询|清单|明细|统计|有哪些|多少|帮我查|未结清)")
 
 
 def _user_event_text(event) -> str:
@@ -34,6 +46,8 @@ def _is_workflow_injected_user_text(text: str) -> bool:
     """跳过工作流大模型节点注入的伪用户消息。"""
     t = text.strip()
     if t.startswith("## 用户问题"):
+        return True
+    if t.startswith("## 用户出图要求"):
         return True
     if t.startswith("## 历史对话"):
         return True
@@ -79,7 +93,64 @@ def conversation_history_for_extractor(ctx: Context, *, current_message: str) ->
 
 
 def is_non_data_query(extraction: RetrievalExtractionResult) -> bool:
-    return (extraction.intent or "").strip() == NON_DATA_QUERY_INTENT
+    return resolve_extractor_task(extraction) == EXTRACTOR_TASK_CHITCHAT
+
+
+def normalize_extractor_task(raw: str) -> str:
+    text = (raw or "").strip().lower()
+    mapping = {
+        "query": EXTRACTOR_TASK_QUERY,
+        "ask": EXTRACTOR_TASK_QUERY,
+        "sql": EXTRACTOR_TASK_QUERY,
+        "问数": EXTRACTOR_TASK_QUERY,
+        "查询": EXTRACTOR_TASK_QUERY,
+        "数据查询": EXTRACTOR_TASK_QUERY,
+        "chart": EXTRACTOR_TASK_CHART,
+        "visualize": EXTRACTOR_TASK_CHART,
+        "visualization": EXTRACTOR_TASK_CHART,
+        "图表": EXTRACTOR_TASK_CHART,
+        "图表分析": EXTRACTOR_TASK_CHART,
+        "可视化": EXTRACTOR_TASK_CHART,
+        "chitchat": EXTRACTOR_TASK_CHITCHAT,
+        "chat": EXTRACTOR_TASK_CHITCHAT,
+        "闲聊": EXTRACTOR_TASK_CHITCHAT,
+        "非数据查询": EXTRACTOR_TASK_CHITCHAT,
+    }
+    return mapping.get(text, "")
+
+
+def looks_like_chart_request(message: str) -> bool:
+    text = (message or "").strip()
+    if not text or not _CHART_REQUEST_RE.search(text):
+        return False
+    # 同一句既要查数又要画图时，第一版仍走问数。
+    if _DATA_QUERY_RE.search(text) and len(text) > 12:
+        return False
+    return True
+
+
+def resolve_extractor_task(
+        extraction: RetrievalExtractionResult,
+        user_message: str = "",
+) -> str:
+    explicit = normalize_extractor_task(extraction.task)
+    message = user_message or ""
+    if (
+            explicit == EXTRACTOR_TASK_CHART
+            and _DATA_QUERY_RE.search(message)
+            and _CHART_REQUEST_RE.search(message)
+            and len(message) > 12
+    ):
+        return EXTRACTOR_TASK_QUERY
+    if explicit:
+        return explicit
+    if looks_like_chart_request(message):
+        return EXTRACTOR_TASK_CHART
+    if (extraction.intent or "").strip() == NON_DATA_QUERY_INTENT:
+        return EXTRACTOR_TASK_CHITCHAT
+    if not (extraction.retrieval_query or "").strip() and not extraction.keywords:
+        return EXTRACTOR_TASK_CHITCHAT
+    return EXTRACTOR_TASK_QUERY
 
 
 def format_extractor_user_message(*, history: str, current_message: str) -> str:
@@ -283,6 +354,65 @@ def format_sql_execution_response(
             parts.append(f"（仅展示前 {max_rows} 行，结果已截断）")
         parts.extend(["", _markdown_table(rows), ""])
     return "\n".join(parts).strip()
+
+
+def _serialize_result_rows(rows: list[dict[str, object]]) -> tuple[list[str], list[dict[str, str]]]:
+    if not rows:
+        return [], []
+    columns = [str(key) for key in rows[0].keys()]
+    serialized: list[dict[str, str]] = []
+    for row in rows:
+        serialized.append({
+            column: _format_cell_value(row.get(column))
+            for column in columns
+        })
+    return columns, serialized
+
+
+def save_query_snapshot(
+        ctx: Context,
+        result_sets: list[tuple[list[dict[str, object]], bool]],
+) -> None:
+    """问数成功后写入快照，供后续按需出图使用；reset_sql_turn_state 不会清理。"""
+    sets: list[dict[str, Any]] = []
+    for rows, truncated in result_sets:
+        columns, serialized_rows = _serialize_result_rows(rows)
+        sets.append({
+            "columns": columns,
+            "rows": serialized_rows,
+            "truncated": bool(truncated),
+            "row_count": len(serialized_rows),
+        })
+    schema_context = (ctx.state.get(SQL_SCHEMA_CONTEXT_STATE_KEY) or "").strip()
+    if len(schema_context) > QUERY_SNAPSHOT_MAX_CONTEXT_CHARS:
+        schema_context = schema_context[: QUERY_SNAPSHOT_MAX_CONTEXT_CHARS - 1].rstrip() + "…"
+    payload = {
+        "user_question": resolve_user_message(ctx),
+        "schema_context": schema_context,
+        "selected_tables": selected_table_names_from_state(ctx),
+        "result_sets": sets,
+        "row_count": sum(item["row_count"] for item in sets),
+    }
+    ctx.state[QUERY_SNAPSHOT_STATE_KEY] = json.dumps(payload, ensure_ascii=False)
+
+
+def load_query_snapshot(ctx: Context) -> dict[str, Any] | None:
+    raw = ctx.state.get(QUERY_SNAPSHOT_STATE_KEY)
+    data: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    sets = data.get("result_sets")
+    if not isinstance(sets, list) or not sets:
+        return None
+    return data
 
 
 def format_table_selector_user_message(stage: SearchStageOutput) -> str:

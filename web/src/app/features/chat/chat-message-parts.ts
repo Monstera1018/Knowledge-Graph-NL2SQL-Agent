@@ -24,6 +24,13 @@ const TABLE_CONTEXT_TOOL_NAMES = new Set([
   'load_sql_schema_context',
 ]);
 
+const CHART_TOOL_NAMES = new Set([
+  'prepare_chart_planner_input',
+  'chart_planner',
+  'parse_chart_spec',
+  'format_no_chart_snapshot_response',
+]);
+
 type TableDetail = {
   name: string;
   comment?: string;
@@ -118,6 +125,8 @@ export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePar
   const merged: MessagePart[] = [];
   const tableContextParts: ToolPart[] = [];
   let tableContextIndex = -1;
+  const chartParts: ToolPart[] = [];
+  let chartIndex = -1;
 
   for (const part of parts) {
     if (part.kind === 'tool' && TABLE_CONTEXT_TOOL_NAMES.has(part.name)) {
@@ -128,6 +137,17 @@ export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePar
         merged.push(tableContext);
       } else {
         merged[tableContextIndex] = tableContext;
+      }
+      continue;
+    }
+    if (part.kind === 'tool' && CHART_TOOL_NAMES.has(part.name)) {
+      chartParts.push(part);
+      const chartPart = buildChartAnalysisPart(chartParts);
+      if (chartIndex < 0) {
+        chartIndex = merged.length;
+        merged.push(chartPart);
+      } else {
+        merged[chartIndex] = chartPart;
       }
       continue;
     }
@@ -171,6 +191,37 @@ function buildTableContextPart(parts: readonly ToolPart[]): ToolPart {
         stringValue(schemaOutput, 'summary') ||
         stringValue(noTableOutput, 'summary') ||
         stringValue(noTableOutput, 'result'),
+      merged_stages: parts.map((part) => part.name),
+    },
+  };
+}
+
+function buildChartAnalysisPart(parts: readonly ToolPart[]): ToolPart {
+  const first = parts[0];
+  const phase = parts.some((part) => part.phase === 'call') ? 'call' : 'result';
+  const planner = findToolPart(parts, 'chart_planner');
+  const parsed = findToolPart(parts, 'parse_chart_spec');
+  const missing = findToolPart(parts, 'format_no_chart_snapshot_response');
+  const parsedOutput = outputRecord(parsed);
+  const missingOutput = outputRecord(missing);
+  const plannerOutput = outputRecord(planner);
+
+  return {
+    kind: 'tool',
+    id: `${first.id}-chart-analysis`,
+    name: 'chart_analysis',
+    phase,
+    title: '分析图表',
+    input: first.input ?? null,
+    output: {
+      stage: 'chart_analysis',
+      status: phase === 'call' ? 'running' : 'ok',
+      result: recordValue(parsedOutput, 'result') ?? recordValue(plannerOutput, 'result') ?? null,
+      summary:
+        stringValue(parsedOutput, 'summary') ||
+        stringValue(missingOutput, 'summary') ||
+        stringValue(missingOutput, 'result') ||
+        '',
       merged_stages: parts.map((part) => part.name),
     },
   };

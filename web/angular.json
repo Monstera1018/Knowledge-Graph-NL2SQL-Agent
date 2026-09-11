@@ -62,7 +62,12 @@
               "exclude": [
                 "@neo4j-nvl/base",
                 "@neo4j-nvl/interaction-handlers",
-                "@neo4j-nvl/layout-workers"
+                "@neo4j-nvl/layout-workers",
+                "echarts",
+                "echarts/core",
+                "echarts/charts",
+                "echarts/components",
+                "echarts/renderers"
               ]
             }
           },

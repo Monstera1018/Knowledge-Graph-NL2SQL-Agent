@@ -142,6 +142,15 @@ export interface ChatAssistantMessage {
 
 export type ChatMessage = ChatUserMessage | ChatAssistantMessage;
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  agentId: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+}
+
 export function isAssistantMessage(msg: ChatMessage): msg is ChatAssistantMessage {
   return msg.role === 'assistant';
 }

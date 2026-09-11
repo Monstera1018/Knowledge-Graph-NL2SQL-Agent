@@ -12,26 +12,18 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { Subscription, finalize } from 'rxjs';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 
 import { ChatApiService } from '../../core/api/chat-api.service';
-import type {
-  AgentDescriptor,
-  ChatAssistantMessage,
-  ChatMessage,
-  ChatUserMessage,
-} from '../../core/models/chat.models';
+import { ChatSessionStore } from '../../core/chat/chat-session.store';
+import type { AgentDescriptor } from '../../core/models/chat.models';
 import { formatApiError } from '../../shared/feedback/api-error';
 import { AppSnackService } from '../../shared/feedback/app-snack.service';
-import { applyStreamEvent } from './chat-stream';
 import { findActiveExecutionTrace } from './chat-trace';
 import { parseTraceSteps } from './chat-trace-parser';
 import { ChatMessageComponent } from './components/chat-message.component';
 import { ChatTraceSidebarComponent } from './components/chat-trace-sidebar.component';
-
-const SESSION_STORAGE_KEY = 'zh_yb_chat_session_id';
 
 const SUGGESTIONS = [
   '有哪些和订单相关的宽表？',
@@ -42,31 +34,6 @@ const SUGGESTIONS = [
 /** 与 .chat-composer__input 的 min-height 保持一致 */
 const COMPOSER_MIN_HEIGHT = '2rem';
 const SCROLL_STICK_THRESHOLD_PX = 120;
-/** SSE 空闲超时：每次收到事件都会刷新，避免长 SQL 或重试被过早中断 */
-const STREAM_IDLE_TIMEOUT_MS = 300_000;
-
-function finalizeAssistantTurn(
-  messages: ChatMessage[],
-  assistantId: string,
-  turnEnded: boolean,
-): ChatMessage[] {
-  if (turnEnded) {
-    return messages;
-  }
-  return messages.map((msg) => {
-    if (msg.id !== assistantId || msg.role !== 'assistant' || msg.status !== 'streaming') {
-      return msg;
-    }
-    return { ...msg, status: 'done' as const };
-  });
-}
-
-function createId(prefix = 'chat'): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  );
-}
 
 @Component({
   selector: 'app-chat-page',
@@ -85,6 +52,7 @@ export class ChatPage {
   private readonly api = inject(ChatApiService);
   private readonly snack = inject(AppSnackService);
   private readonly destroyRef = inject(DestroyRef);
+  protected readonly sessions = inject(ChatSessionStore);
 
   private readonly threadEl = viewChild<ElementRef<HTMLElement>>('thread');
   private readonly threadInnerEl = viewChild<ElementRef<HTMLElement>>('threadInner');
@@ -99,12 +67,16 @@ export class ChatPage {
   protected readonly agents = signal<AgentDescriptor[]>([]);
   protected readonly agentsLoading = signal(true);
   protected readonly selectedAgentId = signal('');
-  protected readonly messages = signal<ChatMessage[]>([]);
   protected readonly draft = signal('');
-  protected readonly sending = signal(false);
   protected readonly agentMenuOpen = signal(false);
 
   protected readonly suggestions = SUGGESTIONS;
+  protected readonly messages = this.sessions.messages;
+  protected readonly sending = this.sessions.sending;
+  protected readonly historyOpen = this.sessions.historyOpen;
+  protected readonly historySessions = this.sessions.historySessions;
+  protected readonly currentSessionId = this.sessions.currentId;
+  protected readonly sendingSessionId = this.sessions.sendingSessionId;
 
   protected readonly selectedAgent = computed(() =>
     this.agents().find((agent) => agent.id === this.selectedAgentId()),
@@ -124,12 +96,7 @@ export class ChatPage {
     parseTraceSteps(this.activeTrace()?.content ?? '').length,
   );
 
-  private sessionId = '';
-  private activeStreamSub: Subscription | undefined;
-
   constructor() {
-    this.sessionId = this.loadOrCreateSessionId();
-
     afterNextRender(() => {
       this.applyComposerHeight();
       this.setupPageVisibilitySync();
@@ -141,6 +108,14 @@ export class ChatPage {
       this.scheduleComposerResize();
     });
 
+    effect(() => {
+      this.messages();
+      this.currentSessionId();
+      if (this.stickToBottom) {
+        this.scheduleThreadScrollToBottom();
+      }
+    });
+
     this.api
       .listAgents()
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -149,11 +124,14 @@ export class ChatPage {
           const list = response.agents ?? [];
           this.agents.set(list);
           if (list.length && !this.selectedAgentId()) {
+            const currentAgent = this.sessions.currentSession()?.agentId;
             const preferred =
+              list.find((a) => a.id === currentAgent) ??
+              list.find((a) => a.id === 'copilot') ??
               list.find((a) => a.id === 'data_copilot') ??
-              list.find((a) => a.id === 'metadata_demo') ??
               list[0];
             this.selectedAgentId.set(preferred.id);
+            this.sessions.setCurrentAgent(preferred.id);
           }
           this.agentsLoading.set(false);
         },
@@ -189,6 +167,7 @@ export class ChatPage {
 
   protected selectAgent(agentId: string): void {
     this.selectedAgentId.set(agentId);
+    this.sessions.setCurrentAgent(agentId);
     this.agentMenuOpen.set(false);
   }
 
@@ -213,14 +192,56 @@ export class ChatPage {
     this.traceSidebarOpen.set(open);
   }
 
-  protected newChat(): void {
-    if (this.sending()) {
-      return;
+  protected toggleHistory(): void {
+    this.sessions.toggleHistoryOpen();
+  }
+
+  protected selectHistorySession(id: string): void {
+    this.sessions.selectSession(id);
+    const agentId = this.sessions.currentSession()?.agentId;
+    if (agentId) {
+      this.selectedAgentId.set(agentId);
     }
-    this.messages.set([]);
     this.traceSidebarOpen.set(false);
-    this.sessionId = createId('session');
-    localStorage.setItem(SESSION_STORAGE_KEY, this.sessionId);
+    this.stickToBottom = true;
+    this.scheduleThreadScrollToBottom();
+  }
+
+  protected deleteHistorySession(event: Event, id: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.sessions.deleteSession(id);
+    const agentId = this.sessions.currentSession()?.agentId;
+    if (agentId) {
+      this.selectedAgentId.set(agentId);
+    }
+    this.traceSidebarOpen.set(false);
+  }
+
+  protected historyTime(value: string): string {
+    const ts = Date.parse(value);
+    if (!Number.isFinite(ts)) {
+      return '';
+    }
+    const delta = Date.now() - ts;
+    if (delta < 60_000) {
+      return '刚刚';
+    }
+    if (delta < 3_600_000) {
+      return `${Math.floor(delta / 60_000)} 分钟前`;
+    }
+    const date = new Date(ts);
+    const today = new Date();
+    if (date.toDateString() === today.toDateString()) {
+      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    }
+    return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+  }
+
+  protected newChat(): void {
+    this.sessions.newChat(this.selectedAgentId());
+    this.traceSidebarOpen.set(false);
+    this.stickToBottom = true;
   }
 
   protected onComposerKeydown(event: KeyboardEvent): void {
@@ -238,98 +259,14 @@ export class ChatPage {
     if (!content || !agentId || this.sending()) {
       return;
     }
-    this.sending.set(true);
-
-    const userMessage: ChatUserMessage = {
-      id: createId('user'),
-      role: 'user',
-      content,
-      createdAt: new Date().toISOString(),
-    };
-
-    const assistantId = createId('assistant');
-    const assistantMessage: ChatAssistantMessage = {
-      id: assistantId,
-      role: 'assistant',
-      parts: [],
-      status: 'streaming',
-      createdAt: new Date().toISOString(),
-    };
-
-    this.messages.update((items) => [...items, userMessage, assistantMessage]);
+    if (!this.sessions.send(content, agentId)) {
+      return;
+    }
     this.draft.set('');
     this.stickToBottom = true;
     this.scheduleThreadScrollToBottom();
-
-    let turnEnded = false;
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-    const resetIdleTimer = () => {
-      if (idleTimer !== undefined) {
-        clearTimeout(idleTimer);
-      }
-      idleTimer = setTimeout(() => {
-        if (!turnEnded) {
-          this.activeStreamSub?.unsubscribe();
-        }
-      }, STREAM_IDLE_TIMEOUT_MS);
-    };
-    resetIdleTimer();
-
-    this.activeStreamSub?.unsubscribe();
-    this.activeStreamSub = this.api
-      .streamMessage(this.sessionId, { agent_id: agentId, content })
-      .pipe(
-        finalize(() => {
-          if (idleTimer !== undefined) {
-            clearTimeout(idleTimer);
-          }
-          this.sending.set(false);
-          this.messages.update((items) => finalizeAssistantTurn(items, assistantId, turnEnded));
-          this.scheduleComposerResize();
-          this.focusComposer();
-          if (this.stickToBottom) {
-            this.scheduleThreadScrollToBottom();
-          }
-        }),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe({
-        next: (event) => {
-          resetIdleTimer();
-          this.messages.update((items) =>
-            items.map((msg) => {
-              if (msg.id !== assistantId || msg.role !== 'assistant') {
-                return msg;
-              }
-              return applyStreamEvent(msg, event);
-            }),
-          );
-          if (this.stickToBottom) {
-            this.scheduleThreadScrollToBottom();
-          }
-          if (this.pageHidden && this.stickToBottom) {
-            this.syncBottomOnVisible = true;
-          }
-          if (event.type === 'turn_end') {
-            turnEnded = true;
-          }
-        },
-        error: (err) => {
-          turnEnded = true;
-          this.messages.update((items) =>
-            items.map((msg) => {
-              if (msg.id !== assistantId || msg.role !== 'assistant') {
-                return msg;
-              }
-              return {
-                ...msg,
-                status: 'error' as const,
-                error: err instanceof Error ? err.message : formatApiError(err),
-              };
-            }),
-          );
-        },
-      });
+    this.scheduleComposerResize();
+    this.focusComposer();
   }
 
   private focusComposer(): void {
@@ -483,14 +420,5 @@ export class ChatPage {
       el.style.height = `${maxPx}px`;
       el.style.overflowY = 'auto';
     }
-  }
-
-  private loadOrCreateSessionId(): string {
-    let id = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (!id) {
-      id = createId('session');
-      localStorage.setItem(SESSION_STORAGE_KEY, id);
-    }
-    return id;
   }
 }

@@ -1,5 +1,5 @@
 <div class="chat-part chat-part--data">
-  @if (part().title && !isCompactPlan() && genericKind() !== 'sql_result') {
+  @if (part().title && !isCompactPlan() && genericKind() !== 'sql_result' && genericKind() !== 'chart_spec') {
     <div class="chat-part__data-title">{{ part().title }}</div>
   }
 
@@ -115,7 +115,7 @@
                     <td [attr.colspan]="result.columns.length || 1">（无数据）</td>
                   </tr>
                 } @else {
-                  @for (row of result.rows; track $index) {
+                  @for (row of previewRows(result); track $index) {
                     <tr>
                       @for (col of result.columns; track col) {
                         <td>{{ row[col] || '' }}</td>
@@ -126,7 +126,46 @@
               </tbody>
             </table>
           </div>
+          @if (hasMoreRows(result)) {
+            <div class="chat-part__result-foot">
+              <button
+                type="button"
+                class="app-btn app-btn--sm chat-part__result-more"
+                (click)="openFullResult(result, $index)"
+              >
+                <mat-icon>open_in_full</mat-icon>
+                查看全部 {{ result.rows.length }} 行
+              </button>
+            </div>
+          }
         </div>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'chart_spec') {
+    <div class="chat-part__chart">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">分析图表</div>
+        <div class="chat-part__result-meta">
+          @if (chartSpec().feasible) {
+            {{ chartSpec().charts.length }} 张图表
+          } @else {
+            未生成图表
+          }
+        </div>
+      </div>
+      @if (chartSpec().summary) {
+        <p class="chat-part__chart-summary">{{ chartSpec().summary }}</p>
+      }
+      @for (chart of chartSpec().charts; track $index) {
+        <section class="chat-part__chart-item">
+          <div class="chat-part__chart-item-head">
+            <h3 class="chat-part__chart-item-title">{{ chart.title }}</h3>
+            @if (chart.note) {
+              <p class="chat-part__chart-item-note">{{ chart.note }}</p>
+            }
+          </div>
+          <app-chat-chart [spec]="chart" />
+        </section>
       }
     </div>
   } @else {

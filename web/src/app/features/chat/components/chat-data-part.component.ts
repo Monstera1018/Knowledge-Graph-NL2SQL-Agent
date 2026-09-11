@@ -1,7 +1,18 @@
 import { JsonPipe } from '@angular/common';
-import { Component, input } from '@angular/core';
+import { Component, computed, inject, input } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
+import { MatIconModule } from '@angular/material/icon';
 
 import type { DataPart } from '../../../core/models/chat.models';
+import {
+  parseSqlResultSets,
+  previewSqlResultRows,
+  sqlResultHasMore,
+  type SqlResultSet,
+} from '../chat-sql-result';
+import { ChatChartComponent } from './chat-chart.component';
+import { ChatSqlResultDialogComponent } from './chat-sql-result-dialog.component';
+import { parseChartSpec } from '../chat-chart';
 
 type SelectedTableDetail = {
   name: string;
@@ -11,33 +22,47 @@ type SelectedTableDetail = {
 
 @Component({
   selector: 'app-chat-data-part',
-  imports: [JsonPipe],
+  imports: [JsonPipe, MatIconModule, ChatChartComponent],
   templateUrl: './chat-data-part.component.html',
   styleUrl: './chat-part.component.css',
 })
 export class ChatDataPartComponent {
+  private readonly dialog = inject(MatDialog);
+
   readonly part = input.required<DataPart>();
 
-  protected sqlResultSets(): Array<{ columns: string[]; rows: Array<Record<string, string>> }> {
-    const sets = this.part().payload['result_sets'];
-    if (!Array.isArray(sets)) {
-      return [];
-    }
-    return sets
-      .map((item) => {
-        if (!item || typeof item !== 'object') {
-          return null;
-        }
-        const columnsRaw = (item as Record<string, unknown>)['columns'];
-        const rowsRaw = (item as Record<string, unknown>)['rows'];
-        if (!Array.isArray(columnsRaw) || !Array.isArray(rowsRaw)) {
-          return null;
-        }
-        const columns = columnsRaw.filter((c): c is string => typeof c === 'string');
-        const rows = rowsRaw.filter((r): r is Record<string, string> => !!r && typeof r === 'object');
-        return { columns, rows };
-      })
-      .filter((item): item is { columns: string[]; rows: Array<Record<string, string>> } => !!item);
+  protected readonly sqlResults = computed(() => parseSqlResultSets(this.part().payload));
+  protected readonly chartSpec = computed(() => parseChartSpec(this.part().payload));
+
+  protected sqlResultSets(): SqlResultSet[] {
+    return this.sqlResults();
+  }
+
+  protected previewRows(result: SqlResultSet): Array<Record<string, string>> {
+    return previewSqlResultRows(result.rows);
+  }
+
+  protected hasMoreRows(result: SqlResultSet): boolean {
+    return sqlResultHasMore(result.rows.length);
+  }
+
+  protected openFullResult(result: SqlResultSet, index: number): void {
+    const sets = this.sqlResults();
+    this.dialog.open(ChatSqlResultDialogComponent, {
+      data: {
+        columns: result.columns,
+        rows: result.rows,
+        setIndex: index,
+        setCount: sets.length,
+      },
+      panelClass: 'app-sql-result-dialog-panel',
+      backdropClass: 'app-dialog-backdrop',
+      autoFocus: 'first-tabbable',
+      restoreFocus: true,
+      width: 'min(72rem, calc(100vw - 2rem))',
+      maxWidth: 'calc(100vw - 2rem)',
+      maxHeight: '86vh',
+    });
   }
 
   protected sqlResultMessage(): string {
@@ -46,7 +71,7 @@ export class ChatDataPartComponent {
   }
 
   protected sqlResultRowCount(): number {
-    return this.sqlResultSets().reduce((total, result) => total + result.rows.length, 0);
+    return this.sqlResults().reduce((total, result) => total + result.rows.length, 0);
   }
 
   protected rows(): Array<{ name: string; comment?: string; description?: string }> {
@@ -169,6 +194,7 @@ export class ChatDataPartComponent {
       schema_plan: '选表结果',
       sql_diagnostic: 'SQL 校验说明',
       sql_result: '查询结果',
+      chart_spec: '分析图表',
     };
     return labels[kind] || '结构化信息';
   }

@@ -54,6 +54,10 @@ class RetrievalExtractionResult(BaseModel):
     intent: str = Field(
         description="一句话概括用户分析意图",
     )
+    task: str = Field(
+        default="",
+        description="下游路由：query 问数、chart 按需出图、chitchat 闲聊",
+    )
 
 
 class SearchStageOutput(BaseModel):

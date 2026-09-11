@@ -1,7 +1,69 @@
 <div class="chat-page">
-  <header class="chat-header">
+  @if (historyOpen()) {
+    <aside class="chat-history" aria-label="历史会话">
+      <div class="chat-history__head">
+        <span class="chat-history__title">历史对话</span>
+        <button
+          type="button"
+          class="chat-history__icon-btn"
+          (click)="newChat()"
+          [disabled]="sending()"
+          aria-label="新对话"
+          title="新对话"
+        >
+          <mat-icon>edit_square</mat-icon>
+        </button>
+      </div>
+      <div class="chat-history__list">
+        @if (!historySessions().length) {
+          <p class="chat-history__empty">还没有历史对话</p>
+        } @else {
+          @for (item of historySessions(); track item.id) {
+            <button
+              type="button"
+              class="chat-history__item"
+              [class.is-active]="item.id === currentSessionId()"
+              [class.is-live]="item.id === sendingSessionId()"
+              (click)="selectHistorySession(item.id)"
+            >
+              <span class="chat-history__item-main">
+                <span class="chat-history__item-title">{{ item.title }}</span>
+                <span class="chat-history__item-time">{{ historyTime(item.updatedAt) }}</span>
+              </span>
+              <span
+                class="chat-history__item-delete"
+                role="button"
+                tabindex="0"
+                aria-label="删除对话"
+                (click)="deleteHistorySession($event, item.id)"
+                (keydown.enter)="deleteHistorySession($event, item.id)"
+              >
+                <mat-icon>close</mat-icon>
+              </span>
+            </button>
+          }
+        }
+      </div>
+    </aside>
+  }
+
+  <div class="chat-stage">
+    <header class="chat-header">
     <div class="chat-header__inner">
       <div class="chat-header__left">
+        <button
+          type="button"
+          class="chat-header__history"
+          (click)="toggleHistory()"
+          [class.is-active]="historyOpen()"
+          aria-label="历史对话"
+          [attr.aria-pressed]="historyOpen()"
+          title="历史对话"
+        >
+          <mat-icon>history</mat-icon>
+          <span>历史</span>
+        </button>
+
         <button
           type="button"
           class="chat-agent-btn"
@@ -158,4 +220,5 @@
       (openChange)="setTraceSidebarOpen($event)"
     />
   }
+  </div>
 </div>

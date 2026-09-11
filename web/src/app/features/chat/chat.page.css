@@ -22,10 +22,207 @@
   position: relative;
   display: flex;
   flex: 1;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
   background: var(--chat-bg);
   color: var(--chat-text);
+}
+
+.chat-history {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 16rem;
+  min-width: 14rem;
+  border-right: 1px solid var(--chat-border-subtle);
+  background: #fafafa;
+}
+
+.chat-history__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 0.75rem 0.45rem;
+}
+
+.chat-history__title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--chat-text);
+}
+
+.chat-history__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--chat-text-secondary);
+  cursor: pointer;
+}
+
+.chat-history__icon-btn:hover:not(:disabled) {
+  background: var(--chat-user-bubble);
+  color: var(--chat-text);
+}
+
+.chat-history__icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-history__icon-btn mat-icon {
+  font-size: 1.05rem !important;
+  width: 1.05rem !important;
+  height: 1.05rem !important;
+}
+
+.chat-history__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 0.45rem 0.75rem;
+}
+
+.chat-history__empty {
+  margin: 0.75rem 0.4rem;
+  font-size: 0.75rem;
+  color: var(--chat-text-muted);
+}
+
+.chat-history__item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  padding: 0.5rem 0.4rem 0.5rem 0.55rem;
+  border: none;
+  border-radius: 0.55rem;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-history__item:hover,
+.chat-history__item.is-active {
+  background: var(--chat-user-bubble);
+}
+
+.chat-history__item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-history__item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--chat-text);
+}
+
+.chat-history__item-time {
+  font-size: 0.6875rem;
+  color: var(--chat-text-muted);
+}
+
+.chat-history__item-delete {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 0.35rem;
+  color: var(--chat-text-muted);
+}
+
+.chat-history__item:hover .chat-history__item-delete,
+.chat-history__item.is-active .chat-history__item-delete {
+  display: inline-flex;
+}
+
+.chat-history__item-delete:hover {
+  background: #ececec;
+  color: var(--chat-text);
+}
+
+.chat-history__item-delete mat-icon {
+  font-size: 0.95rem !important;
+  width: 0.95rem !important;
+  height: 0.95rem !important;
+}
+
+.chat-history__item.is-live .chat-history__item-title::after {
+  content: '';
+  display: inline-block;
+  width: 0.35rem;
+  height: 0.35rem;
+  margin-left: 0.35rem;
+  border-radius: 9999px;
+  background: #3b82f6;
+  vertical-align: middle;
+}
+
+.chat-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+@media (max-width: 799px) {
+  .chat-history {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    box-shadow: 8px 0 24px rgb(0 0 0 / 0.08);
+  }
+}
+
+.chat-header__history {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.55rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--chat-text-secondary);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.chat-header__history:hover,
+.chat-header__history.is-active {
+  background: var(--chat-user-bubble);
+  color: var(--chat-text);
+}
+
+.chat-header__history mat-icon {
+  font-size: 1.125rem !important;
+  width: 1.125rem !important;
+  height: 1.125rem !important;
+}
+
+.chat-header__left {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
 }
 
 /* —— 顶栏：细线分割、内容居中 —— */
@@ -45,11 +242,6 @@
   padding: 0.5rem var(--chat-gutter-x);
   width: 100%;
   box-sizing: border-box;
-}
-
-.chat-header__left {
-  position: relative;
-  min-width: 0;
 }
 
 .chat-header__actions {

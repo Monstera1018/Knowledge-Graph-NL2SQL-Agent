@@ -32,6 +32,10 @@ _STAGE_ORDER = [
     "validate_sql",
     "format_validation_failure_response",
     "execute_sql",
+    "prepare_chart_planner_input",
+    "chart_planner",
+    "parse_chart_spec",
+    "format_no_chart_snapshot_response",
 ]
 _STAGE_LABELS = {
     "extractor": "🧭 解析问题",
@@ -45,8 +49,17 @@ _STAGE_LABELS = {
     "validate_sql": "✅ 校验 SQL",
     "format_validation_failure_response": "⚠️ SQL 修复失败",
     "execute_sql": "🚀 执行 SQL",
+    "prepare_chart_planner_input": "📊 分析图表",
+    "chart_planner": "📊 分析图表",
+    "parse_chart_spec": "📊 分析图表",
+    "format_no_chart_snapshot_response": "📊 分析图表",
 }
-_TEXT_STREAM_STAGES = frozenset({"sql_generator", "chitchat", "format_no_table_response"})
+_TEXT_STREAM_STAGES = frozenset({
+    "sql_generator",
+    "chitchat",
+    "format_no_table_response",
+    "format_no_chart_snapshot_response",
+})
 _BUFFERED_TEXT_STAGES = frozenset({"sql_generator"})
 
 _WORKFLOW_DISPLAY_GROUPS = [
@@ -69,6 +82,16 @@ _WORKFLOW_DISPLAY_GROUPS = [
         ("validate_sql", "format_validation_failure_response"),
     ),
     ("execute_sql", "🚀 执行 SQL", ("execute_sql",)),
+    (
+        "chart",
+        "📊 分析图表",
+        (
+            "prepare_chart_planner_input",
+            "chart_planner",
+            "parse_chart_spec",
+            "format_no_chart_snapshot_response",
+        ),
+    ),
 ]
 
 
@@ -688,6 +711,28 @@ def _extract_markdown_tables(text: str) -> list[dict[str, Any]]:
     return tables
 
 
+def _extract_chart_spec_payload(text: str) -> dict[str, Any] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict) or parsed.get("kind") != "chart_spec":
+        return None
+    charts = parsed.get("charts")
+    if charts is not None and not isinstance(charts, list):
+        return None
+    return parsed
+
+
 def _extract_sql_result_payload(text: str) -> dict[str, Any]:
     tables = _extract_markdown_tables(text)
     message = ""
@@ -828,6 +873,7 @@ class ChatService:
         done_stages: set[str] = set()
         active_stage = ""
         sql_result_emitted = False
+        chart_spec_emitted = False
         text_stream_stage = ""
         text_stream_open = False
         text_stream_got_partial = False
@@ -906,7 +952,7 @@ class ChatService:
             ))
 
         async def close_tool_part(stage: str, *, status: str = "ok"):
-            nonlocal active_tool_part_id, active_tool_stage, sql_result_emitted
+            nonlocal active_tool_part_id, active_tool_stage, sql_result_emitted, chart_spec_emitted
             nonlocal latest_validate_sql, sql_diagnostic_open, emitted
             nonlocal latest_table_selection, latest_table_candidates, schema_plan_emitted
             if not active_tool_part_id:
@@ -943,7 +989,13 @@ class ChatService:
                         workspace_id=workspace_id,
                     )
                 output["result"] = parsed
-            elif stage_text and stage not in (*_TEXT_STREAM_STAGES, "validate_sql", "execute_sql"):
+            elif stage_text and stage not in (
+                *_TEXT_STREAM_STAGES,
+                "validate_sql",
+                "execute_sql",
+                "parse_chart_spec",
+                "chart_planner",
+            ):
                 output["summary"] = stage_text[:600]
                 if stage in {"search", "load_sql_schema_context"}:
                     sections = _extract_context_sections(stage_text)
@@ -1072,6 +1124,37 @@ class ChatService:
                 payload = _extract_sql_result_payload(stage_text)
                 data_id = f"{turn_id}-data-sql-result"
                 sql_result_emitted = True
+                yield sse_line(StreamEvent(
+                    type=StreamEventType.PART_START,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    part={
+                        "kind": "data",
+                        "id": data_id,
+                        "schema": "generic",
+                        "title": "",
+                        "payload": payload,
+                        "truncated": False,
+                    },
+                ))
+                yield sse_line(StreamEvent(
+                    type=StreamEventType.PART_END,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    part_id=data_id,
+                ))
+
+            if stage == "parse_chart_spec" and not chart_spec_emitted:
+                payload = _extract_chart_spec_payload(stage_text)
+                if payload is None:
+                    payload = {
+                        "kind": "chart_spec",
+                        "feasible": False,
+                        "summary": "未能生成可展示的图表，请换个维度再试。",
+                        "charts": [],
+                    }
+                data_id = f"{turn_id}-data-chart-spec"
+                chart_spec_emitted = True
                 yield sse_line(StreamEvent(
                     type=StreamEventType.PART_START,
                     session_id=session_id,
@@ -1239,7 +1322,7 @@ class ChatService:
                 async for line in emit_text_stream_stage():
                     yield line
 
-            if not emitted and not sql_result_emitted:
+            if not emitted and not sql_result_emitted and not chart_spec_emitted:
                 yield sse_line(StreamEvent(
                     type=StreamEventType.PART_DELTA,
                     session_id=session_id,

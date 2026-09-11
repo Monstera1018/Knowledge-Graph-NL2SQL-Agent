@@ -23,6 +23,7 @@
     "@fontsource-variable/noto-sans-sc": "^5.2.10",
     "@neo4j-nvl/base": "^1.1.0",
     "@neo4j-nvl/interaction-handlers": "^1.1.0",
+    "echarts": "^6.1.0",
     "marked": "^18.0.4",
     "material-symbols": "^0.44.9",
     "ngx-markdown": "^21.3.0",
