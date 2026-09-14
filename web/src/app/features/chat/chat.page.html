@@ -136,7 +136,12 @@
   <div class="chat-body">
     <div class="chat-main">
       <div class="chat-thread" #thread (scroll)="onThreadScroll()">
-        <div class="chat-thread__inner" #threadInner>
+        <div
+          class="chat-thread__inner"
+          #threadInner
+          [@.disabled]="reduceMotion()"
+          [@sessionTransition]="currentSessionId()"
+        >
           @if (!hasMessages()) {
             <section class="chat-welcome">
               <h1 class="chat-welcome__title">有什么可以帮你的？</h1>

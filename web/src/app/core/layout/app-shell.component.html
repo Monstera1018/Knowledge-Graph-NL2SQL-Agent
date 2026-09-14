@@ -133,6 +133,13 @@
   </aside>
 
   <main class="shell-main">
-    <router-outlet />
+    <div
+      class="route-host"
+      [class.route-host--flush]="pageState(outlet) === 'chat'"
+      [@.disabled]="reduceMotion()"
+      [@pageTransition]="pageState(outlet)"
+    >
+      <router-outlet #outlet="outlet" />
+    </div>
   </main>
 </div>

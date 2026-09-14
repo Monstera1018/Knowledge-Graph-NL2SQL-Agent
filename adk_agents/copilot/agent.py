@@ -15,7 +15,7 @@ from google.adk import Agent
 from google.adk import Context
 from google.adk import Event
 from google.adk import Workflow
-from google.adk.workflow import DEFAULT_ROUTE, Edge
+from google.adk.workflow import DEFAULT_ROUTE
 
 from adk_agents.common import (
     RetrievalExtractionResult,
@@ -31,8 +31,12 @@ from adk_agents.copilot.helpers import (
     SQL_LAST_ATTEMPT_STATE_KEY,
     SQL_VALIDATED_SQL_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
-    EXTRACTOR_TASK_CHART,
-    EXTRACTOR_TASK_CHITCHAT,
+    EXTRACTOR_RESULT_STATE_KEY,
+    MAX_PLANNER_TURNS,
+    PLAN_OBSERVATION_STATE_KEY,
+    PLAN_STATE_KEY,
+    PLAN_TURN_COUNT_STATE_KEY,
+    QUERY_SNAPSHOT_FRESH_STATE_KEY,
     NO_USABLE_TABLE_MESSAGE,
     clear_state_key,
     conversation_history_for_extractor,
@@ -41,26 +45,64 @@ from adk_agents.copilot.helpers import (
     format_sql_generator_user_message,
     save_sql_last_attempt,
     format_table_selector_user_message,
+    increment_plan_turn,
+    load_extractor_result,
+    load_last_chart_spec,
+    save_last_report_spec,
+    load_plan,
+    load_plan_observation,
+    load_plan_turn,
     load_query_snapshot,
-    resolve_extractor_task,
+    query_snapshot_is_fresh,
+    extraction_from_node_input,
+    extractor_result_has_content,
     resolve_user_message,
     resolve_workspace_id,
     selected_table_names_from_state,
+    save_extractor_result,
+    save_last_chart_spec,
+    save_plan,
+    save_plan_observation,
     save_query_snapshot,
     save_user_message_to_state,
     sql_execution_max_rows,
     text_from_node_input,
 )
+from adk_agents.copilot.plan import (
+    OBS_CHART_DONE,
+    OBS_CHART_INFEASIBLE,
+    OBS_NO_SNAPSHOT,
+    OBS_NO_TABLES,
+    OBS_QUERY_FAILED,
+    OBS_QUERY_SUCCESS,
+    OBS_VALIDATION_FAILED,
+    OBS_REPORT_DONE,
+    OBS_REPORT_INFEASIBLE,
+    PLAN_STEP_CHART,
+    PLAN_STEP_QUERY,
+    PLAN_STEP_REPORT,
+    format_planner_user_message,
+    plan_dump,
+    plan_from_model_text,
+    plan_is_chitchat,
+    plan_is_stop,
+    plan_next,
+)
 from adk_agents.copilot.prompts import (
     CHITCHAT_INSTRUCTION,
     CHART_PLANNER_INSTRUCTION,
+    PLANNER_INSTRUCTION,
+    REPORT_PLANNER_INSTRUCTION,
     build_sql_generator_instruction,
     TABLE_SELECTOR_INSTRUCTION,
 )
 from adk_agents.copilot.chart import (
-    NO_CHART_SNAPSHOT_MESSAGE,
     format_chart_planner_user_message,
     materialize_chart_spec,
+)
+from adk_agents.copilot.report import (
+    format_report_planner_user_message,
+    materialize_analysis_report,
 )
 from adk_agents.extractor.agent import root_agent as extractor
 from tools.db import execute_read_sql, get_sql_read_dialect, lookup_distinct_column_values
@@ -145,6 +187,11 @@ def reset_sql_turn_state(ctx: Context, node_input: str) -> str:
             SELECTED_TABLES_STATE_KEY,
             TABLE_CANDIDATES_STATE_KEY,
             RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY,
+            PLAN_STATE_KEY,
+            PLAN_OBSERVATION_STATE_KEY,
+            PLAN_TURN_COUNT_STATE_KEY,
+            EXTRACTOR_RESULT_STATE_KEY,
+            QUERY_SNAPSHOT_FRESH_STATE_KEY,
     ):
         clear_state_key(ctx, key)
     return text_from_node_input(node_input)
@@ -184,22 +231,203 @@ def parse_extractor_output(ctx: Context, node_input) -> RetrievalExtractionResul
     except (json.JSONDecodeError, ValueError):
         pass
 
-    return RetrievalExtractionResult(
+    result = RetrievalExtractionResult(
         retrieval_query=retrieval_query,
         keywords=keywords,
         intent=intent,
         task=task,
     )
+    save_extractor_result(ctx, result)
+    return result
 
 
-def route_after_extractor(ctx: Context, node_input: RetrievalExtractionResult) -> Event:
-    """按 extractor 的 task 分流：闲聊、按需出图、或默认问数。"""
-    task = resolve_extractor_task(node_input, resolve_user_message(ctx))
-    if task == EXTRACTOR_TASK_CHITCHAT:
-        return Event(route="chitchat", output=node_input)
-    if task == EXTRACTOR_TASK_CHART:
-        return Event(route="chart", output=node_input)
-    return Event(output=node_input)
+def _extraction_from_node_input(ctx: Context, node_input) -> RetrievalExtractionResult:
+    return extraction_from_node_input(ctx, node_input)
+
+
+def _build_plan_observation(
+        ctx: Context,
+        *,
+        last_next: str,
+        status: str,
+        code: str,
+        detail: str = "",
+) -> dict:
+    snapshot = load_query_snapshot(ctx)
+    columns: list[str] = []
+    row_count = 0
+    if snapshot:
+        row_count = int(snapshot.get("row_count") or 0)
+        result_sets = snapshot.get("result_sets")
+        if isinstance(result_sets, list) and result_sets and isinstance(result_sets[0], dict):
+            raw_columns = result_sets[0].get("columns")
+            if isinstance(raw_columns, list):
+                columns = [str(item).strip() for item in raw_columns if str(item).strip()]
+    return {
+        "last_next": last_next,
+        "status": status,
+        "code": code,
+        "detail": (detail or "").strip()[:800],
+        "has_snapshot": bool(snapshot),
+        "snapshot_columns": columns,
+        "snapshot_row_count": row_count,
+    }
+
+
+def prepare_planner_input(ctx: Context, node_input=None) -> Event:
+    """把解析结果、快照和上一管道观察交给规划节点。"""
+    extraction = _extraction_from_node_input(ctx, node_input)
+    if extractor_result_has_content(extraction):
+        save_extractor_result(ctx, extraction)
+    if load_plan_turn(ctx) >= MAX_PLANNER_TURNS:
+        return Event(route="stop", output=extraction)
+    snapshot = load_query_snapshot(ctx)
+    message = format_planner_user_message(
+        user_message=resolve_user_message(ctx),
+        extraction=extraction,
+        has_snapshot=bool(snapshot),
+        snapshot=snapshot,
+        last_chart=load_last_chart_spec(ctx),
+        observation=load_plan_observation(ctx),
+        previous_plan=load_plan(ctx),
+        remaining_turns=max(0, MAX_PLANNER_TURNS - load_plan_turn(ctx)),
+    )
+    return Event(output=message)
+
+
+planner = Agent(
+    model=get_llm_model(),
+    name="planner",
+    description="根据用户问题、会话状态和上一管道观察决定下一步执行查询、出图、闲聊还是结束。",
+    instruction=PLANNER_INSTRUCTION,
+)
+
+
+def parse_plan(ctx: Context, node_input) -> str:
+    """解析规划 JSON，并结合观察约束下一步。"""
+    increment_plan_turn(ctx)
+    extraction = load_extractor_result(ctx)
+    snapshot = load_query_snapshot(ctx)
+    plan = plan_from_model_text(
+        text_from_node_input(node_input),
+        extraction=extraction,
+        user_message=resolve_user_message(ctx),
+        has_snapshot=bool(snapshot),
+        observation=load_plan_observation(ctx),
+        previous_plan=load_plan(ctx),
+    )
+    save_plan(ctx, plan)
+    return plan_dump(plan)
+
+
+def route_after_plan(ctx: Context, node_input) -> Event:
+    """按本轮下一步分流；管道结束后再回到规划。"""
+    extraction = load_extractor_result(ctx)
+    plan = load_plan(ctx)
+    if plan_is_stop(plan):
+        return Event(route="stop", output=extraction)
+    if plan_is_chitchat(plan):
+        return Event(route="chitchat", output=extraction)
+    if plan_next(plan) == PLAN_STEP_CHART:
+        return Event(route="chart", output=extraction)
+    if plan_next(plan) == PLAN_STEP_REPORT:
+        return Event(route="report", output=extraction)
+    return Event(output=extraction)
+
+
+def end_plan(ctx: Context, node_input=None) -> str:
+    """规划结束；用户可见内容已由问数/图表/闲聊节点产出。"""
+    return ""
+
+
+def observe_query_result(ctx: Context, node_input) -> Event:
+    """问数管道结束后记录观察，供规划决定是否出图或结束。"""
+    detail = text_from_node_input(node_input)
+    if query_snapshot_is_fresh(ctx) and load_query_snapshot(ctx):
+        observation = _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_QUERY,
+            status="success",
+            code=OBS_QUERY_SUCCESS,
+            detail="查询成功，已写入结果快照。",
+        )
+    else:
+        observation = _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_QUERY,
+            status="failed",
+            code=OBS_QUERY_FAILED,
+            detail=detail or "查询未产生可用结果。",
+        )
+    save_plan_observation(ctx, observation)
+    return Event(output=load_extractor_result(ctx))
+
+
+def observe_no_tables(ctx: Context, node_input=None) -> Event:
+    save_plan_observation(
+        ctx,
+        _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_QUERY,
+            status="failed",
+            code=OBS_NO_TABLES,
+            detail="未匹配到可用数据表。",
+        ),
+    )
+    return Event(output=load_extractor_result(ctx))
+
+
+def observe_validation_failure(ctx: Context, node_input=None) -> Event:
+    save_plan_observation(
+        ctx,
+        _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_QUERY,
+            status="failed",
+            code=OBS_VALIDATION_FAILED,
+            detail="SQL 校验多次失败，问数管道已终止。",
+        ),
+    )
+    return Event(output=load_extractor_result(ctx))
+
+
+def observe_no_snapshot(ctx: Context, node_input=None) -> Event:
+    last_next = plan_next(load_plan(ctx)) or PLAN_STEP_CHART
+    save_plan_observation(
+        ctx,
+        _build_plan_observation(
+            ctx,
+            last_next=last_next,
+            status="blocked",
+            code=OBS_NO_SNAPSHOT,
+            detail="当前没有可分析的查询快照。",
+        ),
+    )
+    return Event(output=load_extractor_result(ctx))
+
+
+def observe_chart_result(ctx: Context, node_input) -> Event:
+    raw = text_from_node_input(node_input)
+    feasible = False
+    summary = ""
+    try:
+        payload = json.loads(raw) if raw else {}
+        if isinstance(payload, dict):
+            feasible = payload.get("feasible") is True
+            summary = str(payload.get("summary") or "").strip()
+    except json.JSONDecodeError:
+        pass
+    save_plan_observation(
+        ctx,
+        _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_CHART,
+            status="success" if feasible else "failed",
+            code=OBS_CHART_DONE if feasible else OBS_CHART_INFEASIBLE,
+            detail=summary or ("图表已生成。" if feasible else "当前结果无法生成图表。"),
+        ),
+    )
+    return Event(output=load_extractor_result(ctx))
 
 
 def prepare_chitchat_input(ctx: Context, node_input: RetrievalExtractionResult) -> str:
@@ -216,20 +444,19 @@ chitchat = Agent(
 )
 
 
-def prepare_chart_planner_input(ctx: Context, node_input: RetrievalExtractionResult) -> Event:
-    """没有上一轮查询快照时直接提示用户先问数，否则构造图表规划输入。"""
+def prepare_chart_planner_input(ctx: Context, node_input=None) -> Event:
+    """没有查询快照时回到规划；否则带上出图要求和上一张图规格。"""
     snapshot = load_query_snapshot(ctx)
     if not snapshot:
         return Event(route="no_snapshot", output=node_input)
+    plan = load_plan(ctx) or {}
+    user_request = str(plan.get("chart_request") or "").strip() or resolve_user_message(ctx)
     message = format_chart_planner_user_message(
-        user_request=resolve_user_message(ctx),
+        user_request=user_request,
         snapshot=snapshot,
+        last_chart=load_last_chart_spec(ctx),
     )
     return Event(output=message)
-
-
-def format_no_chart_snapshot_response(ctx: Context, node_input=None) -> str:
-    return NO_CHART_SNAPSHOT_MESSAGE
 
 
 chart_planner = Agent(
@@ -243,17 +470,100 @@ chart_planner = Agent(
 def parse_chart_spec(ctx: Context, node_input) -> str:
     """校验模型输出的图表 JSON，并基于快照结果集聚合出可绑定数据。"""
     snapshot = load_query_snapshot(ctx)
-    payload = materialize_chart_spec(text_from_node_input(node_input), snapshot)
+    plan = load_plan(ctx) or {}
+    user_request = str(plan.get("chart_request") or "").strip() or resolve_user_message(ctx)
+    payload = materialize_chart_spec(
+        text_from_node_input(node_input),
+        snapshot,
+        user_request=user_request,
+        last_chart=load_last_chart_spec(ctx),
+    )
+    save_last_chart_spec(ctx, payload)
     return json.dumps(payload, ensure_ascii=False)
+
+
+def prepare_report_planner_input(ctx: Context, node_input=None) -> Event:
+    """没有查询快照时回到规划；否则带上报告要求和结果概要。"""
+    snapshot = load_query_snapshot(ctx)
+    if not snapshot:
+        return Event(route="no_snapshot", output=node_input)
+    message = format_report_planner_user_message(
+        user_request=resolve_user_message(ctx),
+        snapshot=snapshot,
+    )
+    return Event(output=message)
+
+
+report_planner = Agent(
+    model=get_llm_model(),
+    name="report_planner",
+    description="根据已有查询结果规划分析报告的总体情况、分类分析和结论。",
+    instruction=REPORT_PLANNER_INSTRUCTION,
+)
+
+
+def parse_report_spec(ctx: Context, node_input) -> str:
+    """校验报告 JSON，基于快照聚合图表并写出 Word 文件。"""
+    snapshot = load_query_snapshot(ctx)
+    payload = materialize_analysis_report(
+        text_from_node_input(node_input),
+        snapshot,
+        user_request=resolve_user_message(ctx),
+    )
+    save_last_report_spec(ctx, payload)
+    if payload.get("feasible") and payload.get("analyses"):
+        charts = [
+            item.get("chart")
+            for item in payload.get("analyses") or []
+            if isinstance(item, dict) and isinstance(item.get("chart"), dict)
+        ]
+        if charts:
+            save_last_chart_spec(ctx, {
+                "kind": "chart_spec",
+                "feasible": True,
+                "summary": str(payload.get("summary") or "").strip(),
+                "charts": charts,
+            })
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def observe_report_result(ctx: Context, node_input) -> Event:
+    raw = text_from_node_input(node_input)
+    feasible = False
+    summary = ""
+    try:
+        payload = json.loads(raw) if raw else {}
+        if isinstance(payload, dict):
+            feasible = payload.get("feasible") is True
+            summary = str(payload.get("summary") or "").strip()
+    except json.JSONDecodeError:
+        pass
+    save_plan_observation(
+        ctx,
+        _build_plan_observation(
+            ctx,
+            last_next=PLAN_STEP_REPORT,
+            status="success" if feasible else "failed",
+            code=OBS_REPORT_DONE if feasible else OBS_REPORT_INFEASIBLE,
+            detail=summary or ("分析报告已生成。" if feasible else "当前结果无法生成分析报告。"),
+        ),
+    )
+    return Event(output=load_extractor_result(ctx))
 
 
 async def search(
         ctx: Context,
-        node_input: RetrievalExtractionResult,
+        node_input,
 ) -> SearchStageOutput:
+    extraction = _extraction_from_node_input(ctx, node_input)
+    if extractor_result_has_content(extraction):
+        save_extractor_result(ctx, extraction)
     workspace_id = resolve_workspace_id(ctx)
-    queries = [node_input.retrieval_query, *node_input.keywords, node_input.intent]
+    queries = [extraction.retrieval_query, *extraction.keywords, extraction.intent]
     queries = [q for q in queries if (q or "").strip()]
+    user_message = (extraction.retrieval_query or "").strip() or resolve_user_message(ctx)
+    if not queries and user_message:
+        queries = [user_message]
 
     search_result = await search_and_build_llm_context_with_hits(
         queries,
@@ -265,8 +575,8 @@ async def search(
     ctx.state[TABLE_CANDIDATES_STATE_KEY] = table_candidates
     ctx.state[RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY] = search_result.unbound_knowledge_hit_uuids
 
-    user_message = node_input.retrieval_query
-    save_user_message_to_state(ctx, user_message)
+    if user_message:
+        save_user_message_to_state(ctx, user_message)
 
     return SearchStageOutput(
         user_message=user_message,
@@ -579,13 +889,28 @@ root_agent = Workflow(
     edges=[
         (
             "START",
+            reset_sql_turn_state,
             prepare_extractor_input,
             extractor,
             parse_extractor_output,
-            route_after_extractor,
+            prepare_planner_input,
+        ),
+        (
+            prepare_planner_input,
             {
+                "stop": end_plan,
+                DEFAULT_ROUTE: planner,
+            },
+        ),
+        (
+            planner,
+            parse_plan,
+            route_after_plan,
+            {
+                "stop": end_plan,
                 "chitchat": prepare_chitchat_input,
                 "chart": prepare_chart_planner_input,
+                "report": prepare_report_planner_input,
                 DEFAULT_ROUTE: search,
             },
         ),
@@ -596,10 +921,32 @@ root_agent = Workflow(
         (
             prepare_chart_planner_input,
             {
-                "no_snapshot": format_no_chart_snapshot_response,
+                "no_snapshot": observe_no_snapshot,
                 DEFAULT_ROUTE: chart_planner,
             },
+        ),
+        (
+            prepare_report_planner_input,
+            {
+                "no_snapshot": observe_no_snapshot,
+                DEFAULT_ROUTE: report_planner,
+            },
+        ),
+        (
+            observe_no_snapshot,
+            prepare_planner_input,
+        ),
+        (
+            chart_planner,
             parse_chart_spec,
+            observe_chart_result,
+            prepare_planner_input,
+        ),
+        (
+            report_planner,
+            parse_report_spec,
+            observe_report_result,
+            prepare_planner_input,
         ),
         (
             search,
@@ -611,6 +958,14 @@ root_agent = Workflow(
                 "no_tables": format_no_table_response,
                 DEFAULT_ROUTE: load_sql_schema_context,
             },
+        ),
+        (
+            format_no_table_response,
+            observe_no_tables,
+            prepare_planner_input,
+        ),
+        (
+            load_sql_schema_context,
             prepare_sql_generator_input,
             sql_generator,
             validate_sql,
@@ -619,6 +974,16 @@ root_agent = Workflow(
                 "failed": format_validation_failure_response,
                 DEFAULT_ROUTE: execute_sql,
             },
+        ),
+        (
+            format_validation_failure_response,
+            observe_validation_failure,
+            prepare_planner_input,
+        ),
+        (
+            execute_sql,
+            observe_query_result,
+            prepare_planner_input,
         ),
     ],
 )

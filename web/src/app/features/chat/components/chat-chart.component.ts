@@ -19,6 +19,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption, EChartsType } from 'echarts/core';
 
 import type { ChatChartView } from '../chat-chart';
+import { DEFAULT_CHART_PALETTE } from '../chat-chart';
 
 echarts.use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
@@ -73,7 +74,7 @@ export class ChatChartComponent implements OnDestroy {
 }
 
 function buildChartOption(spec: ChatChartView): EChartsCoreOption {
-  const palette = ['#2563eb', '#0ea5e9', '#059669', '#d97706', '#7c3aed'];
+  const palette = spec.palette.length ? spec.palette : DEFAULT_CHART_PALETTE;
   if (spec.type === 'pie') {
     const values = spec.series[0]?.values ?? [];
     return {

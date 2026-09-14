@@ -3,6 +3,8 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 
+import { pageTransition } from '../../shared/animations/page-transitions';
+import { createReducedMotionSignal } from '../../shared/utils/reduced-motion';
 import { AuthService } from '../auth/auth.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 
@@ -20,10 +22,12 @@ const SIDEBAR_ANIM_MS = 380;
   imports: [RouterOutlet, RouterLink, RouterLinkActive, MatIconModule, MatTooltipModule],
   templateUrl: './app-shell.component.html',
   styleUrl: './app-shell.component.css',
+  animations: [pageTransition],
 })
 export class AppShellComponent {
   private readonly auth = inject(AuthService);
   private readonly workspace = inject(WorkspaceService);
+  protected readonly reduceMotion = createReducedMotionSignal();
 
   protected readonly collapsed = signal(true);
   protected readonly animating = signal(false);
@@ -74,5 +78,9 @@ export class AppShellComponent {
 
   protected logout(): void {
     this.auth.logout().subscribe();
+  }
+
+  protected pageState(outlet: RouterOutlet): string {
+    return outlet?.isActivated ? (outlet.activatedRoute.snapshot.routeConfig?.path ?? '') : '';
   }
 }

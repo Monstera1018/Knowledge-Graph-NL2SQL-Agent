@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DataPart, TextPart } from '../../core/models/chat.models';
+import type { DataPart, TextPart, ToolPart } from '../../core/models/chat.models';
 import {
   isQueryResultText,
+  mergeDisplayToolParts,
   partOrderKey,
   reorderQueryMarkdown,
   shouldShowArtifactPart,
@@ -218,5 +219,113 @@ describe('chat-message-parts', () => {
         content: 'SELECT 1',
       }),
     ).toBeLessThan(partOrderKey(queryResultTextPart('result')));
+  });
+
+  it('merges planner and parse_plan into one task plan node', () => {
+    const planner: ToolPart = {
+      kind: 'tool',
+      id: 't-planner',
+      name: 'planner',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { steps: ['query'] } },
+      duration_ms: 400,
+    };
+    const parsed: ToolPart = {
+      kind: 'tool',
+      id: 't-parse-plan',
+      name: 'parse_plan',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { next: 'query', steps: ['query'], reason: '先查数' } },
+      duration_ms: 200,
+    };
+    const parsedAgain: ToolPart = {
+      kind: 'tool',
+      id: 't-parse-plan-2',
+      name: 'parse_plan',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: {
+        result: {
+          next: 'chart',
+          steps: ['query', 'chart'],
+          reason: '查询成功后再出图',
+          decisions: [
+            { next: 'query', reason: '先查数' },
+            { next: 'chart', reason: '查询成功后再出图' },
+          ],
+        },
+      },
+      duration_ms: 300,
+    };
+    const merged = mergeDisplayToolParts([planner, parsed, parsedAgain]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].kind).toBe('tool');
+    if (merged[0].kind !== 'tool') {
+      return;
+    }
+    expect(merged[0].name).toBe('task_plan');
+    expect(merged[0].duration_ms).toBe(900);
+    const output = merged[0].output as Record<string, unknown>;
+    expect(output['result']).toEqual({
+      next: 'chart',
+      steps: ['query', 'chart'],
+      reason: '查询成功后再出图',
+      decisions: [
+        { next: 'query', reason: '先查数' },
+        { next: 'chart', reason: '查询成功后再出图' },
+      ],
+    });
+  });
+
+  it('merges report planner tools into one analysis report node', () => {
+    const prepare: ToolPart = {
+      kind: 'tool',
+      id: 't-prepare-report',
+      name: 'prepare_report_planner_input',
+      phase: 'result',
+      title: '分析报告',
+      input: null,
+      output: { stage: 'prepare_report_planner_input', status: 'ok' },
+      duration_ms: 80,
+    };
+    const planner: ToolPart = {
+      kind: 'tool',
+      id: 't-report-planner',
+      name: 'report_planner',
+      phase: 'result',
+      title: '分析报告',
+      input: null,
+      output: { stage: 'report_planner', status: 'ok', summary: '按区县分析' },
+      duration_ms: 900,
+    };
+    const parsed: ToolPart = {
+      kind: 'tool',
+      id: 't-parse-report',
+      name: 'parse_report_spec',
+      phase: 'result',
+      title: '分析报告',
+      input: null,
+      output: {
+        stage: 'parse_report_spec',
+        status: 'ok',
+        result: { kind: 'analysis_report', feasible: true },
+        summary: '已生成分析报告',
+      },
+      duration_ms: 400,
+    };
+    const merged = mergeDisplayToolParts([prepare, planner, parsed]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].kind).toBe('tool');
+    if (merged[0].kind !== 'tool') {
+      return;
+    }
+    expect(merged[0].name).toBe('report_analysis');
+    expect(merged[0].title).toBe('分析报告');
+    expect(merged[0].duration_ms).toBe(1380);
   });
 });

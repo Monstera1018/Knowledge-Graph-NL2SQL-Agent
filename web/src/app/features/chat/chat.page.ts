@@ -24,6 +24,8 @@ import { findActiveExecutionTrace } from './chat-trace';
 import { parseTraceSteps } from './chat-trace-parser';
 import { ChatMessageComponent } from './components/chat-message.component';
 import { ChatTraceSidebarComponent } from './components/chat-trace-sidebar.component';
+import { sessionTransition } from '../../shared/animations/page-transitions';
+import { createReducedMotionSignal } from '../../shared/utils/reduced-motion';
 
 const SUGGESTIONS = [
   '有哪些和订单相关的宽表？',
@@ -47,6 +49,7 @@ const SCROLL_STICK_THRESHOLD_PX = 120;
   templateUrl: './chat.page.html',
   styleUrl: './chat.page.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  animations: [sessionTransition],
 })
 export class ChatPage {
   private readonly api = inject(ChatApiService);
@@ -77,6 +80,7 @@ export class ChatPage {
   protected readonly historySessions = this.sessions.historySessions;
   protected readonly currentSessionId = this.sessions.currentId;
   protected readonly sendingSessionId = this.sessions.sendingSessionId;
+  protected readonly reduceMotion = createReducedMotionSignal(this.destroyRef);
 
   protected readonly selectedAgent = computed(() =>
     this.agents().find((agent) => agent.id === this.selectedAgentId()),

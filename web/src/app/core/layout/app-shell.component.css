@@ -53,20 +53,41 @@
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  padding: 1rem 1.25rem;
+  padding: 0;
   background: #fff;
 }
 
-/* 路由页面占满剩余高度；滚动由各页面内部容器负责 */
-.shell-main > :not(router-outlet) {
+.route-host {
+  position: relative;
   flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 1rem 1.25rem;
+}
+
+/* 对话页需要贴齐主区边缘，避免负边距被 overflow 裁切成白条 */
+.route-host--flush {
+  padding: 0;
+}
+
+/* 路由页面占满剩余高度；滚动由各页面内部容器负责 */
+.route-host > :not(router-outlet) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
 @media (min-width: 640px) {
-  .shell-main {
+  .route-host {
     padding: 1.25rem 1.75rem;
+  }
+
+  .route-host--flush {
+    padding: 0;
   }
 }
 
@@ -375,5 +396,9 @@
   .shell,
   .nav-item::before {
     transition: none !important;
+  }
+
+  .route-host > :not(router-outlet) {
+    transform: none !important;
   }
 }

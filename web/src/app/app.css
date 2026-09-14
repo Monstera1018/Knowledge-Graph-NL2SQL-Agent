@@ -1,0 +1,14 @@
+:host,
+.app-frame {
+  display: block;
+  height: 100%;
+}
+
+.app-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.app-frame > :not(router-outlet) {
+  height: 100%;
+}

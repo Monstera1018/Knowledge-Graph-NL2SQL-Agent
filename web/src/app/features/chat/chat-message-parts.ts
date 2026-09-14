@@ -1,4 +1,5 @@
 import type { ArtifactPart, DataPart, MessagePart, TextPart, ToolPart } from '../../core/models/chat.models';
+import { mergeToolTiming } from './tool-duration';
 
 const PART_ORDER = {
   workflow: 0,
@@ -24,11 +25,19 @@ const TABLE_CONTEXT_TOOL_NAMES = new Set([
   'load_sql_schema_context',
 ]);
 
+const PLAN_TOOL_NAMES = new Set(['planner', 'parse_plan']);
+
 const CHART_TOOL_NAMES = new Set([
   'prepare_chart_planner_input',
   'chart_planner',
   'parse_chart_spec',
   'format_no_chart_snapshot_response',
+]);
+
+const REPORT_TOOL_NAMES = new Set([
+  'prepare_report_planner_input',
+  'report_planner',
+  'parse_report_spec',
 ]);
 
 type TableDetail = {
@@ -125,8 +134,12 @@ export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePar
   const merged: MessagePart[] = [];
   const tableContextParts: ToolPart[] = [];
   let tableContextIndex = -1;
+  const planParts: ToolPart[] = [];
+  let planIndex = -1;
   const chartParts: ToolPart[] = [];
   let chartIndex = -1;
+  const reportParts: ToolPart[] = [];
+  let reportIndex = -1;
 
   for (const part of parts) {
     if (part.kind === 'tool' && TABLE_CONTEXT_TOOL_NAMES.has(part.name)) {
@@ -137,6 +150,17 @@ export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePar
         merged.push(tableContext);
       } else {
         merged[tableContextIndex] = tableContext;
+      }
+      continue;
+    }
+    if (part.kind === 'tool' && PLAN_TOOL_NAMES.has(part.name)) {
+      planParts.push(part);
+      const planPart = buildTaskPlanPart(planParts);
+      if (planIndex < 0) {
+        planIndex = merged.length;
+        merged.push(planPart);
+      } else {
+        merged[planIndex] = planPart;
       }
       continue;
     }
@@ -151,10 +175,52 @@ export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePar
       }
       continue;
     }
+    if (part.kind === 'tool' && REPORT_TOOL_NAMES.has(part.name)) {
+      reportParts.push(part);
+      const reportPart = buildReportAnalysisPart(reportParts);
+      if (reportIndex < 0) {
+        reportIndex = merged.length;
+        merged.push(reportPart);
+      } else {
+        merged[reportIndex] = reportPart;
+      }
+      continue;
+    }
     merged.push(part);
   }
 
   return merged;
+}
+
+function buildTaskPlanPart(parts: readonly ToolPart[]): ToolPart {
+  const first = parts[0];
+  const phase = parts.some((part) => part.phase === 'call') ? 'call' : 'result';
+  const parsed = findToolPart(parts, 'parse_plan');
+  const planner = findToolPart(parts, 'planner');
+  const parsedOutput = outputRecord(parsed);
+  const plannerOutput = outputRecord(planner);
+  const result =
+    recordValue(parsedOutput, 'result') ??
+    recordValue(plannerOutput, 'result') ??
+    (parsedOutput && Object.keys(parsedOutput).length ? parsedOutput : null) ??
+    (plannerOutput && Object.keys(plannerOutput).length ? plannerOutput : null);
+
+  return {
+    kind: 'tool',
+    id: `${first.id}-task-plan`,
+    name: 'task_plan',
+    phase,
+    title: '规划步骤',
+    input: first.input ?? null,
+    ...mergeToolTiming(parts),
+    output: {
+      stage: 'task_plan',
+      status: phase === 'call' ? 'running' : 'ok',
+      result,
+      summary: stringValue(parsedOutput, 'summary') || stringValue(plannerOutput, 'summary') || '',
+      merged_stages: parts.map((part) => part.name),
+    },
+  };
 }
 
 function buildTableContextPart(parts: readonly ToolPart[]): ToolPart {
@@ -182,6 +248,7 @@ function buildTableContextPart(parts: readonly ToolPart[]): ToolPart {
     phase,
     title: '确定数据表与表结构',
     input: first.input ?? null,
+    ...mergeToolTiming(parts),
     output: {
       stage: 'table_context',
       status: phase === 'call' ? 'running' : 'ok',
@@ -213,6 +280,7 @@ function buildChartAnalysisPart(parts: readonly ToolPart[]): ToolPart {
     phase,
     title: '分析图表',
     input: first.input ?? null,
+    ...mergeToolTiming(parts),
     output: {
       stage: 'chart_analysis',
       status: phase === 'call' ? 'running' : 'ok',
@@ -222,6 +290,32 @@ function buildChartAnalysisPart(parts: readonly ToolPart[]): ToolPart {
         stringValue(missingOutput, 'summary') ||
         stringValue(missingOutput, 'result') ||
         '',
+      merged_stages: parts.map((part) => part.name),
+    },
+  };
+}
+
+function buildReportAnalysisPart(parts: readonly ToolPart[]): ToolPart {
+  const first = parts[0];
+  const phase = parts.some((part) => part.phase === 'call') ? 'call' : 'result';
+  const planner = findToolPart(parts, 'report_planner');
+  const parsed = findToolPart(parts, 'parse_report_spec');
+  const parsedOutput = outputRecord(parsed);
+  const plannerOutput = outputRecord(planner);
+
+  return {
+    kind: 'tool',
+    id: `${first.id}-report-analysis`,
+    name: 'report_analysis',
+    phase,
+    title: '分析报告',
+    input: first.input ?? null,
+    ...mergeToolTiming(parts),
+    output: {
+      stage: 'report_analysis',
+      status: phase === 'call' ? 'running' : 'ok',
+      result: recordValue(parsedOutput, 'result') ?? recordValue(plannerOutput, 'result') ?? null,
+      summary: stringValue(parsedOutput, 'summary') || stringValue(plannerOutput, 'summary') || '',
       merged_stages: parts.map((part) => part.name),
     },
   };
@@ -355,7 +449,12 @@ function normalizeTitle(title: string): string {
 }
 
 function findToolPart(parts: readonly ToolPart[], name: string): ToolPart | undefined {
-  return parts.find((part) => part.name === name);
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (parts[index].name === name) {
+      return parts[index];
+    }
+  }
+  return undefined;
 }
 
 function outputRecord(part: ToolPart | undefined): Record<string, unknown> | null {

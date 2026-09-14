@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ _COPILOT_WORKSPACE_STATE_KEY = "copilot_workspace_id"
 
 _STAGE_ORDER = [
     "extractor",
+    "planner",
+    "parse_plan",
     "chitchat",
     "search",
     "table_selector",
@@ -36,9 +39,14 @@ _STAGE_ORDER = [
     "chart_planner",
     "parse_chart_spec",
     "format_no_chart_snapshot_response",
+    "prepare_report_planner_input",
+    "report_planner",
+    "parse_report_spec",
 ]
 _STAGE_LABELS = {
     "extractor": "🧭 解析问题",
+    "planner": "🧩 规划步骤",
+    "parse_plan": "🧩 规划步骤",
     "chitchat": "💬 闲聊回复",
     "search": "🔎 检索上下文",
     "table_selector": "🗂️ 选择数据表",
@@ -53,17 +61,20 @@ _STAGE_LABELS = {
     "chart_planner": "📊 分析图表",
     "parse_chart_spec": "📊 分析图表",
     "format_no_chart_snapshot_response": "📊 分析图表",
+    "prepare_report_planner_input": "📄 分析报告",
+    "report_planner": "📄 分析报告",
+    "parse_report_spec": "📄 分析报告",
 }
 _TEXT_STREAM_STAGES = frozenset({
     "sql_generator",
     "chitchat",
     "format_no_table_response",
-    "format_no_chart_snapshot_response",
 })
 _BUFFERED_TEXT_STAGES = frozenset({"sql_generator"})
 
 _WORKFLOW_DISPLAY_GROUPS = [
     ("extractor", "🧭 解析问题", ("extractor",)),
+    ("planner", "🧩 规划步骤", ("planner", "parse_plan")),
     ("search", "🔎 检索上下文", ("search",)),
     (
         "table_context",
@@ -82,16 +93,25 @@ _WORKFLOW_DISPLAY_GROUPS = [
         ("validate_sql", "format_validation_failure_response"),
     ),
     ("execute_sql", "🚀 执行 SQL", ("execute_sql",)),
-    (
-        "chart",
-        "📊 分析图表",
         (
-            "prepare_chart_planner_input",
-            "chart_planner",
-            "parse_chart_spec",
-            "format_no_chart_snapshot_response",
+            "chart",
+            "📊 分析图表",
+            (
+                "prepare_chart_planner_input",
+                "chart_planner",
+                "parse_chart_spec",
+                "format_no_chart_snapshot_response",
+            ),
         ),
-    ),
+        (
+            "report",
+            "📄 分析报告",
+            (
+                "prepare_report_planner_input",
+                "report_planner",
+                "parse_report_spec",
+            ),
+        ),
 ]
 
 
@@ -733,6 +753,25 @@ def _extract_chart_spec_payload(text: str) -> dict[str, Any] | None:
     return parsed
 
 
+def _extract_analysis_report_payload(text: str) -> dict[str, Any] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(parsed, dict) or parsed.get("kind") != "analysis_report":
+        return None
+    return parsed
+
+
 def _extract_sql_result_payload(text: str) -> dict[str, Any]:
     tables = _extract_markdown_tables(text)
     message = ""
@@ -874,6 +913,7 @@ class ChatService:
         active_stage = ""
         sql_result_emitted = False
         chart_spec_emitted = False
+        report_spec_emitted = False
         text_stream_stage = ""
         text_stream_open = False
         text_stream_got_partial = False
@@ -902,6 +942,7 @@ class ChatService:
 
         active_tool_part_id = ""
         active_tool_stage = ""
+        active_tool_started_at: datetime | None = None
 
         async def emit_text_stream_stage() -> AsyncIterator[str]:
             nonlocal emitted
@@ -952,7 +993,8 @@ class ChatService:
             ))
 
         async def close_tool_part(stage: str, *, status: str = "ok"):
-            nonlocal active_tool_part_id, active_tool_stage, sql_result_emitted, chart_spec_emitted
+            nonlocal active_tool_part_id, active_tool_stage, active_tool_started_at
+            nonlocal sql_result_emitted, chart_spec_emitted, report_spec_emitted
             nonlocal latest_validate_sql, sql_diagnostic_open, emitted
             nonlocal latest_table_selection, latest_table_candidates, schema_plan_emitted
             if not active_tool_part_id:
@@ -995,6 +1037,8 @@ class ChatService:
                 "execute_sql",
                 "parse_chart_spec",
                 "chart_planner",
+                "parse_report_spec",
+                "report_planner",
             ):
                 output["summary"] = stage_text[:600]
                 if stage in {"search", "load_sql_schema_context"}:
@@ -1013,6 +1057,13 @@ class ChatService:
                         patch={"op": "text_append", "text": piece},
                     ))
 
+            ended_at = datetime.now(timezone.utc)
+            duration_ms = 0
+            if active_tool_started_at is not None:
+                duration_ms = max(
+                    0,
+                    int((ended_at - active_tool_started_at).total_seconds() * 1000),
+                )
             yield_line = sse_line(StreamEvent(
                 type=StreamEventType.PART_DELTA,
                 session_id=session_id,
@@ -1021,6 +1072,20 @@ class ChatService:
                 patch={"op": "field_set", "path": "phase", "value": "result"},
             ))
             yield yield_line
+            yield sse_line(StreamEvent(
+                type=StreamEventType.PART_DELTA,
+                session_id=session_id,
+                turn_id=turn_id,
+                part_id=active_tool_part_id,
+                patch={"op": "field_set", "path": "ended_at", "value": ended_at.isoformat()},
+            ))
+            yield sse_line(StreamEvent(
+                type=StreamEventType.PART_DELTA,
+                session_id=session_id,
+                turn_id=turn_id,
+                part_id=active_tool_part_id,
+                patch={"op": "field_set", "path": "duration_ms", "value": duration_ms},
+            ))
             yield sse_line(StreamEvent(
                 type=StreamEventType.PART_DELTA,
                 session_id=session_id,
@@ -1036,6 +1101,7 @@ class ChatService:
             ))
             active_tool_part_id = ""
             active_tool_stage = ""
+            active_tool_started_at = None
 
             if stage == "validate_sql" and isinstance(latest_validate_sql, dict):
                 if latest_validate_sql.get("ok") is False:
@@ -1175,6 +1241,42 @@ class ChatService:
                     part_id=data_id,
                 ))
 
+            if stage == "parse_report_spec" and not report_spec_emitted:
+                payload = _extract_analysis_report_payload(stage_text)
+                if payload is None:
+                    payload = {
+                        "kind": "analysis_report",
+                        "feasible": False,
+                        "summary": "未能生成分析报告，请换个分析维度再试。",
+                        "title": "",
+                        "overview": "",
+                        "conclusions": "",
+                        "analyses": [],
+                        "file_id": "",
+                        "filename": "",
+                    }
+                data_id = f"{turn_id}-data-analysis-report"
+                report_spec_emitted = True
+                yield sse_line(StreamEvent(
+                    type=StreamEventType.PART_START,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    part={
+                        "kind": "data",
+                        "id": data_id,
+                        "schema": "generic",
+                        "title": "",
+                        "payload": payload,
+                        "truncated": False,
+                    },
+                ))
+                yield sse_line(StreamEvent(
+                    type=StreamEventType.PART_END,
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    part_id=data_id,
+                ))
+
         try:
             async for event in self._copilot_runtime.stream(
                 user_id=user_id,
@@ -1230,6 +1332,7 @@ class ChatService:
                     attempt = stage_attempts.get(stage, 0)
                     tool_suffix = f"-r{attempt}" if attempt > 0 else ""
                     active_tool_part_id = f"{turn_id}-tool-{stage}{tool_suffix}"
+                    active_tool_started_at = datetime.now(timezone.utc)
                     yield sse_line(StreamEvent(
                         type=StreamEventType.PART_START,
                         session_id=session_id,
@@ -1241,6 +1344,7 @@ class ChatService:
                             "phase": "call",
                             "title": _STAGE_LABELS.get(stage, stage),
                             "input": {"workspace_id": workspace_id, "session_id": session_id},
+                            "started_at": active_tool_started_at.isoformat(),
                         },
                     ))
 
@@ -1322,7 +1426,12 @@ class ChatService:
                 async for line in emit_text_stream_stage():
                     yield line
 
-            if not emitted and not sql_result_emitted and not chart_spec_emitted:
+            if active_tool_part_id and active_tool_stage:
+                async for line in close_tool_part(active_tool_stage):
+                    yield line
+                done_stages.add(active_tool_stage)
+
+            if not emitted and not sql_result_emitted and not chart_spec_emitted and not report_spec_emitted:
                 yield sse_line(StreamEvent(
                     type=StreamEventType.PART_DELTA,
                     session_id=session_id,
@@ -1330,11 +1439,6 @@ class ChatService:
                     part_id=part_id,
                     patch={"op": "text_append", "text": "本次未返回可展示文本，请重试或补充问题。"},
                 ))
-
-            if active_tool_part_id and active_tool_stage:
-                async for line in close_tool_part(active_tool_stage):
-                    yield line
-                done_stages.add(active_tool_stage)
 
             if latest_table_selection is not None and not schema_plan_emitted:
                 latest_table_selection = await _enrich_table_selection_details(

@@ -26,10 +26,25 @@ NON_DATA_QUERY_INTENT = "非数据查询"
 EXTRACTOR_TASK_QUERY = "query"
 EXTRACTOR_TASK_CHART = "chart"
 EXTRACTOR_TASK_CHITCHAT = "chitchat"
+EXTRACTOR_TASK_REPORT = "report"
 QUERY_SNAPSHOT_STATE_KEY = "query_snapshot"
 QUERY_SNAPSHOT_MAX_CONTEXT_CHARS = 8_000
+QUERY_SNAPSHOT_FRESH_STATE_KEY = "query_snapshot_fresh"
+PLAN_STATE_KEY = "copilot_plan"
+PLAN_OBSERVATION_STATE_KEY = "copilot_plan_observation"
+PLAN_TURN_COUNT_STATE_KEY = "copilot_plan_turn"
+MAX_PLANNER_TURNS = 5
+EXTRACTOR_RESULT_STATE_KEY = "extractor_result"
+LAST_CHART_SPEC_STATE_KEY = "last_chart_spec"
+LAST_REPORT_SPEC_STATE_KEY = "last_report_spec"
 _CHART_REQUEST_RE = re.compile(
-    r"(画(个|一张)?图|生成图表|出(个|一张)?图|可视化|柱状图|折线图|饼图|趋势图|统计图|换成饼图|换成柱状图|换成折线图|看(一下)?趋势)",
+    r"(画(个|一张|一个)?(分析)?图|生成(分析)?图表|出(个|一张|一个)?(分析)?图|"
+    r"可视化|柱状图|折线图|饼图|趋势图|统计图|分析图表|图表|"
+    r"换成(饼图|柱状图|折线图)|改成(饼图|柱状图|折线图)|换(一个|种|个)?(展示形式|图)|"
+    r"换(个|一种)?颜色|色调|配色|看(一下)?趋势)",
+)
+_REPORT_REQUEST_RE = re.compile(
+    r"(分析报告|生成报告|出一份报告|写(一份)?报告|下载报告|报告文件)",
 )
 _DATA_QUERY_RE = re.compile(r"(查询|清单|明细|统计|有哪些|多少|帮我查|未结清)")
 
@@ -47,7 +62,15 @@ def _is_workflow_injected_user_text(text: str) -> bool:
     t = text.strip()
     if t.startswith("## 用户问题"):
         return True
+    if t.startswith("## 用户最新输入"):
+        return True
     if t.startswith("## 用户出图要求"):
+        return True
+    if t.startswith("## 用户报告要求"):
+        return True
+    if t.startswith("## 问题解析结果"):
+        return True
+    if t.startswith("## 当前是否已有查询结果"):
         return True
     if t.startswith("## 历史对话"):
         return True
@@ -111,6 +134,9 @@ def normalize_extractor_task(raw: str) -> str:
         "图表": EXTRACTOR_TASK_CHART,
         "图表分析": EXTRACTOR_TASK_CHART,
         "可视化": EXTRACTOR_TASK_CHART,
+        "report": EXTRACTOR_TASK_REPORT,
+        "分析报告": EXTRACTOR_TASK_REPORT,
+        "报告": EXTRACTOR_TASK_REPORT,
         "chitchat": EXTRACTOR_TASK_CHITCHAT,
         "chat": EXTRACTOR_TASK_CHITCHAT,
         "闲聊": EXTRACTOR_TASK_CHITCHAT,
@@ -119,12 +145,27 @@ def normalize_extractor_task(raw: str) -> str:
     return mapping.get(text, "")
 
 
+def user_requests_chart(message: str) -> bool:
+    """用户是否明确提到出图、换图或改配色。"""
+    return bool(_CHART_REQUEST_RE.search((message or "").strip()))
+
+
+def user_requests_report(message: str) -> bool:
+    """用户是否明确要求生成分析报告文件。"""
+    return bool(_REPORT_REQUEST_RE.search((message or "").strip()))
+
+
+def user_requests_new_query(message: str) -> bool:
+    """用户是否在要新的取数，而不是只改图表展示。"""
+    return bool(_DATA_QUERY_RE.search((message or "").strip()))
+
+
 def looks_like_chart_request(message: str) -> bool:
     text = (message or "").strip()
-    if not text or not _CHART_REQUEST_RE.search(text):
+    if not text or not user_requests_chart(text):
         return False
-    # 同一句既要查数又要画图时，第一版仍走问数。
-    if _DATA_QUERY_RE.search(text) and len(text) > 12:
+    # extractor 的 task 提示：同一句既要查数又要画图时仍标 query，由规划节点决定是否续跑图表。
+    if user_requests_new_query(text) and len(text) > 12:
         return False
     return True
 
@@ -142,10 +183,19 @@ def resolve_extractor_task(
             and len(message) > 12
     ):
         return EXTRACTOR_TASK_QUERY
+    if (
+            explicit == EXTRACTOR_TASK_REPORT
+            and _DATA_QUERY_RE.search(message)
+            and _REPORT_REQUEST_RE.search(message)
+            and len(message) > 12
+    ):
+        return EXTRACTOR_TASK_QUERY
     if explicit:
         return explicit
     if looks_like_chart_request(message):
         return EXTRACTOR_TASK_CHART
+    if user_requests_report(message) and not user_requests_new_query(message):
+        return EXTRACTOR_TASK_REPORT
     if (extraction.intent or "").strip() == NON_DATA_QUERY_INTENT:
         return EXTRACTOR_TASK_CHITCHAT
     if not (extraction.retrieval_query or "").strip() and not extraction.keywords:
@@ -394,6 +444,10 @@ def save_query_snapshot(
         "row_count": sum(item["row_count"] for item in sets),
     }
     ctx.state[QUERY_SNAPSHOT_STATE_KEY] = json.dumps(payload, ensure_ascii=False)
+    ctx.state[QUERY_SNAPSHOT_FRESH_STATE_KEY] = "1"
+    # 新查询结果作废上一张图和上一份报告，避免套到新数据。
+    clear_state_key(ctx, LAST_CHART_SPEC_STATE_KEY)
+    clear_state_key(ctx, LAST_REPORT_SPEC_STATE_KEY)
 
 
 def load_query_snapshot(ctx: Context) -> dict[str, Any] | None:
@@ -413,6 +467,178 @@ def load_query_snapshot(ctx: Context) -> dict[str, Any] | None:
     if not isinstance(sets, list) or not sets:
         return None
     return data
+
+
+def query_snapshot_is_fresh(ctx: Context) -> bool:
+    return str(ctx.state.get(QUERY_SNAPSHOT_FRESH_STATE_KEY) or "").strip() == "1"
+
+
+def save_extractor_result(ctx: Context, extraction: RetrievalExtractionResult) -> None:
+    ctx.state[EXTRACTOR_RESULT_STATE_KEY] = extraction.model_dump_json()
+
+
+def load_extractor_result(ctx: Context) -> RetrievalExtractionResult:
+    return coerce_extractor_result(ctx.state.get(EXTRACTOR_RESULT_STATE_KEY)) or RetrievalExtractionResult(
+        retrieval_query="",
+        keywords=[],
+        intent="",
+        task="",
+    )
+
+
+def extractor_result_has_content(extraction: RetrievalExtractionResult | None) -> bool:
+    if extraction is None:
+        return False
+    return bool(
+        (extraction.retrieval_query or "").strip()
+        or extraction.keywords
+        or (extraction.intent or "").strip()
+        or (extraction.task or "").strip()
+    )
+
+
+def coerce_extractor_result(node_input: Any) -> RetrievalExtractionResult | None:
+    """把 ADK 节点输入还原为解析结果。FunctionNode 会把 BaseModel 打成 dict。"""
+    if node_input is None:
+        return None
+    if isinstance(node_input, RetrievalExtractionResult):
+        return node_input
+    nested = getattr(node_input, "output", None)
+    if nested is not None and nested is not node_input:
+        parsed = coerce_extractor_result(nested)
+        if parsed is not None:
+            return parsed
+    data: Any = node_input
+    if isinstance(node_input, str):
+        text = node_input.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(data, dict):
+        return None
+    if not any(
+        key in data
+        for key in ("retrieval_query", "keywords", "intent", "task")
+    ):
+        return None
+    keywords = data.get("keywords")
+    return RetrievalExtractionResult(
+        retrieval_query=str(data.get("retrieval_query") or "").strip(),
+        keywords=[str(item).strip() for item in keywords if str(item).strip()]
+        if isinstance(keywords, list)
+        else [],
+        intent=str(data.get("intent") or "").strip(),
+        task=str(data.get("task") or "").strip(),
+    )
+
+
+def extraction_from_node_input(ctx: Context, node_input: Any) -> RetrievalExtractionResult:
+    parsed = coerce_extractor_result(node_input)
+    if extractor_result_has_content(parsed):
+        return parsed
+    stored = load_extractor_result(ctx)
+    if extractor_result_has_content(stored):
+        return stored
+    return parsed or stored
+
+
+def save_plan(ctx: Context, plan: dict[str, Any]) -> None:
+    ctx.state[PLAN_STATE_KEY] = json.dumps(plan, ensure_ascii=False)
+
+
+def load_plan(ctx: Context) -> dict[str, Any] | None:
+    raw = ctx.state.get(PLAN_STATE_KEY)
+    data: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(data, dict) and (data.get("next") or isinstance(data.get("steps"), list)):
+        return data
+    return None
+
+
+def save_plan_observation(ctx: Context, observation: dict[str, Any]) -> None:
+    ctx.state[PLAN_OBSERVATION_STATE_KEY] = json.dumps(observation, ensure_ascii=False)
+
+
+def load_plan_observation(ctx: Context) -> dict[str, Any] | None:
+    raw = ctx.state.get(PLAN_OBSERVATION_STATE_KEY)
+    data: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return data if isinstance(data, dict) else None
+
+
+def load_plan_turn(ctx: Context) -> int:
+    raw = ctx.state.get(PLAN_TURN_COUNT_STATE_KEY)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
+def increment_plan_turn(ctx: Context) -> int:
+    count = load_plan_turn(ctx) + 1
+    ctx.state[PLAN_TURN_COUNT_STATE_KEY] = str(count)
+    return count
+
+
+def save_last_chart_spec(ctx: Context, payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    ctx.state[LAST_CHART_SPEC_STATE_KEY] = json.dumps(payload, ensure_ascii=False)
+
+
+def load_last_chart_spec(ctx: Context) -> dict[str, Any] | None:
+    raw = ctx.state.get(LAST_CHART_SPEC_STATE_KEY)
+    data: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def save_last_report_spec(ctx: Context, payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    ctx.state[LAST_REPORT_SPEC_STATE_KEY] = json.dumps(payload, ensure_ascii=False)
+
+
+def load_last_report_spec(ctx: Context) -> dict[str, Any] | None:
+    raw = ctx.state.get(LAST_REPORT_SPEC_STATE_KEY)
+    data: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(data, dict):
+        return data
+    return None
 
 
 def format_table_selector_user_message(stage: SearchStageOutput) -> str:

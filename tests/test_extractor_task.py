@@ -5,8 +5,11 @@ from adk_agents.copilot.helpers import (
     EXTRACTOR_TASK_CHART,
     EXTRACTOR_TASK_CHITCHAT,
     EXTRACTOR_TASK_QUERY,
+    EXTRACTOR_TASK_REPORT,
     looks_like_chart_request,
     resolve_extractor_task,
+    user_requests_chart,
+    user_requests_report,
 )
 
 
@@ -48,6 +51,15 @@ class ExtractorTaskTest(unittest.TestCase):
             EXTRACTOR_TASK_QUERY,
         )
 
+    def test_generate_analysis_chart_is_chart_intent(self):
+        message = "帮我查询金华地区各县区用户占比，并生成分析图表"
+        self.assertTrue(user_requests_chart(message))
+        self.assertFalse(looks_like_chart_request(message))
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task="query"), message),
+            EXTRACTOR_TASK_QUERY,
+        )
+
     def test_chitchat_from_intent(self):
         self.assertEqual(
             resolve_extractor_task(
@@ -60,6 +72,29 @@ class ExtractorTaskTest(unittest.TestCase):
                 "你好",
             ),
             EXTRACTOR_TASK_CHITCHAT,
+        )
+
+    def test_display_change_is_chart(self):
+        self.assertTrue(looks_like_chart_request("可以换一个展示形式，并且色调改成橙黄色吗"))
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task=""), "可以换一个展示形式，并且色调改成橙黄色吗"),
+            EXTRACTOR_TASK_CHART,
+        )
+
+    def test_combined_query_and_report_stays_query(self):
+        message = "生成金华地区未结清用户清单的分析报告"
+        self.assertTrue(user_requests_report(message))
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task="report"), message),
+            EXTRACTOR_TASK_QUERY,
+        )
+
+    def test_report_followup_without_new_query(self):
+        message = "基于刚才的结果生成分析报告"
+        self.assertTrue(user_requests_report(message))
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task=""), message),
+            EXTRACTOR_TASK_REPORT,
         )
 
 

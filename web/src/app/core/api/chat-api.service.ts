@@ -104,6 +104,13 @@ export class ChatApiService {
       return () => controller.abort();
     });
   }
+
+  downloadReport(fileId: string, filename = '分析报告.docx') {
+    const params = new URLSearchParams({ filename });
+    return this.http.get(`/api/chat/reports/${encodeURIComponent(fileId)}?${params.toString()}`, {
+      responseType: 'blob',
+    });
+  }
 }
 
 function parseSseBuffer(buffer: string): { events: StreamEvent[]; rest: string } {

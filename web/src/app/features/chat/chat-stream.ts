@@ -17,7 +17,7 @@ export function applyStreamEvent(
       }
       return {
         ...message,
-        parts: [...message.parts, event.part],
+        parts: [...message.parts, stampToolStart(event.part, event.ts)],
       };
     case 'part_delta':
       if (!event.part_id || !event.patch) {
@@ -26,7 +26,7 @@ export function applyStreamEvent(
       return {
         ...message,
         parts: message.parts.map((part) =>
-          part.id === event.part_id ? patchPart(part, event.patch!) : part,
+          part.id === event.part_id ? stampToolTiming(patchPart(part, event.patch!), event.ts) : part,
         ),
       };
     case 'part_end':
@@ -90,5 +90,49 @@ function setField(part: MessagePart, path: string, value: unknown): MessagePart 
   if (path === 'output' && part.kind === 'tool') {
     return { ...part, output: value };
   }
+  if (path === 'started_at' && part.kind === 'tool') {
+    return { ...part, started_at: String(value ?? '') };
+  }
+  if (path === 'ended_at' && part.kind === 'tool') {
+    return { ...part, ended_at: String(value ?? '') };
+  }
+  if (path === 'duration_ms' && part.kind === 'tool') {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? { ...part, duration_ms: Math.max(0, Math.round(parsed)) } : part;
+  }
   return part;
+}
+
+function stampToolStart(part: MessagePart, eventTs?: string): MessagePart {
+  if (part.kind !== 'tool' || part.started_at || !eventTs) {
+    return part;
+  }
+  return { ...part, started_at: eventTs };
+}
+
+function stampToolTiming(part: MessagePart, eventTs?: string): MessagePart {
+  if (part.kind !== 'tool') {
+    return part;
+  }
+  let next = part;
+  if (!next.started_at && eventTs) {
+    next = { ...next, started_at: eventTs };
+  }
+  if (next.phase !== 'result' || next.duration_ms != null) {
+    return next;
+  }
+  const endedAt = next.ended_at || eventTs;
+  if (!next.started_at || !endedAt) {
+    return next;
+  }
+  const started = Date.parse(next.started_at);
+  const ended = Date.parse(endedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(ended) || ended < started) {
+    return next.ended_at ? next : { ...next, ended_at: endedAt };
+  }
+  return {
+    ...next,
+    ended_at: next.ended_at || endedAt,
+    duration_ms: ended - started,
+  };
 }

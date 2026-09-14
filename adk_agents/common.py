@@ -56,7 +56,7 @@ class RetrievalExtractionResult(BaseModel):
     )
     task: str = Field(
         default="",
-        description="下游路由：query 问数、chart 按需出图、chitchat 闲聊",
+        description="规划提示：query 问数、chart 出图、report 分析报告、chitchat 闲聊；最终路由由 planner 决定",
     )
 
 

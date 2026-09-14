@@ -154,7 +154,13 @@
         </div>
       </div>
       @if (chartSpec().summary) {
-        <p class="chat-part__chart-summary">{{ chartSpec().summary }}</p>
+        <p class="chat-part__chart-summary">
+          @if (chartSpec().feasible) {
+            {{ chartSpec().summary }}
+          } @else {
+            无法生成：{{ chartSpec().summary }}
+          }
+        </p>
       }
       @for (chart of chartSpec().charts; track $index) {
         <section class="chat-part__chart-item">
@@ -165,6 +171,53 @@
             }
           </div>
           <app-chat-chart [spec]="chart" />
+        </section>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'analysis_report') {
+    <div class="chat-part__report">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">{{ reportTitle() }}</div>
+        <div class="chat-part__result-meta">
+          @if (reportDownloadable()) {
+            可下载 Word
+          } @else if (!reportFeasible()) {
+            未能生成
+          }
+        </div>
+      </div>
+      @if (reportSummary()) {
+        <p class="chat-part__chart-summary">{{ reportSummary() }}</p>
+      }
+      @if (reportDownloadable()) {
+        <div class="chat-part__result-foot">
+          <button type="button" class="app-btn app-btn--sm chat-part__result-more" (click)="downloadReport()">
+            <mat-icon>download</mat-icon>
+            下载分析报告
+          </button>
+        </div>
+      }
+      @if (reportOverview()) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">一、总体情况</h3>
+          <p class="chat-part__report-text">{{ reportOverview() }}</p>
+        </section>
+      }
+      @for (item of reportAnalyses(); track $index) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">{{ $index === 0 ? '二、分类分析 · ' : '' }}{{ item.heading }}</h3>
+          @if (item.narrative) {
+            <p class="chat-part__report-text">{{ item.narrative }}</p>
+          }
+          @if (item.chart; as chart) {
+            <app-chat-chart [spec]="chart" />
+          }
+        </section>
+      }
+      @if (reportConclusions()) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">三、分析结论</h3>
+          <p class="chat-part__report-text">{{ reportConclusions() }}</p>
         </section>
       }
     </div>

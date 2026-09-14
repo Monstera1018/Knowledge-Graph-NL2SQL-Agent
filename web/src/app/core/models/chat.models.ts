@@ -60,6 +60,9 @@ export interface ToolPart {
   title: string;
   input?: Record<string, unknown> | null;
   output?: unknown;
+  started_at?: string;
+  ended_at?: string;
+  duration_ms?: number;
 }
 
 export interface DataPart {

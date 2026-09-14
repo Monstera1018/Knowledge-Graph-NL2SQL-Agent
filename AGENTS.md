@@ -2,7 +2,7 @@
 
 本文件用于指导后续 Agent/Codex/开发者在 TYWS 项目中协作开发。内容参考《知识图谱+向量库协同驱动的智能问数建设方案-V4.0》，并结合当前代码实现整理。若建设方案与现阶段代码存在差异，以本文件中“当前实现”为准。
 
-最后核对日期：2026-09-07。依据当前工作区代码（包含尚未提交的修改）更新；运行情况必须在验证时重新检查，不能把历史服务状态或验证结果当作当前保证。后续代码与本文件不一致时，应核查代码并同步文档。
+最后核对日期：2026-09-14。依据当前工作区代码（包含尚未提交的修改）更新；运行情况必须在验证时重新检查，不能把历史服务状态或验证结果当作当前保证。后续代码与本文件不一致时，应核查代码并同步文档。
 
 ## 项目定位
 
@@ -84,21 +84,34 @@ TYWS
   -> prepare_extractor_input
   -> extractor
   -> parse_extractor_output
-  -> route_after_extractor
-     ├─ 非问数：chitchat
+  -> prepare_planner_input
+     ├─ 规划次数耗尽：end_plan
+     └─ 否则：planner
+  -> parse_plan
+  -> route_after_plan
+     ├─ stop：end_plan
+     ├─ 闲聊：chitchat（终端，不再规划）
+     ├─ 出图：prepare_chart_planner_input
+     ├─ 报告：prepare_report_planner_input
      └─ 问数：search
   -> prepare_table_selector_input
   -> table_selector
   -> parse_table_selection
   -> route_after_table_selection
-     ├─ 无可用表：format_no_table_response
+     ├─ 无可用表：format_no_table_response -> observe_no_tables -> prepare_planner_input
      └─ 有可用表：load_sql_schema_context
   -> prepare_sql_generator_input
   -> sql_generator
   -> validate_sql
      ├─ 校验失败但未达上限：回到 sql_generator 修复
-     ├─ 校验失败且达上限：format_validation_failure_response
-     └─ 校验通过：execute_sql
+     ├─ 校验失败且达上限：format_validation_failure_response -> observe_validation_failure -> prepare_planner_input
+     └─ 校验通过：execute_sql -> observe_query_result -> prepare_planner_input
+  出图分支：
+     ├─ 无快照：observe_no_snapshot -> prepare_planner_input
+     └─ 有快照：chart_planner -> parse_chart_spec -> observe_chart_result -> prepare_planner_input
+  报告分支：
+     ├─ 无快照：observe_no_snapshot -> prepare_planner_input
+     └─ 有快照：report_planner -> parse_report_spec -> observe_report_result -> prepare_planner_input
 ```
 
 ### extractor
@@ -109,11 +122,27 @@ TYWS
 - 提取 keywords。
 - 判断 intent。
 - 对多轮对话会参考历史消息，例如“杭州呢”这类同主题追问需要结合上文理解。
+- `task` 只是给规划节点的提示，不再直接三路分流。
 
 注意：
 
 - `reset_sql_turn_state` 会清理 SQL 相关状态，避免无关旧上下文泄漏。
 - 但 extractor 仍可使用会话历史做问题改写，这是多轮问数所需能力。
+
+### planner
+
+职责：
+
+- 每次只输出下一步：`query`、`chart`、`report`、`chitchat`、`stop`。
+- 问数内部（选表、生成 SQL、`validate_sql` 重试）仍是固定管道，不每步再规划。
+- 管道出口写入观察（有无快照、查询是否成功、出图是否可行、报告是否生成等），再回到 `prepare_planner_input`。
+- 用户直接要求出图或分析报告但当前没有查询快照时，允许先选 `chart`/`report`；没有快照时观察 `no_snapshot` 后重新规划，通常下一步改为 `query`。
+- 清单/统计题默认下一步只有 `query`，不会因为“可以画图/可以写报告”就选 `chart` 或 `report`。
+- 后端只做空转防护：没有图表/报告意图且无快照时去掉 `chart`/`report`；问数/选表彻底失败则结束；用户需求未完成时不允许直接 `stop`。出图或报告失败后由 planner 根据观察选择再试或重新问数。
+- 分析报告约定三个部分（总体情况、分类分析含嵌入图表、分析结论），正文由模型生成；`parse_report_spec` 基于查询快照聚合图表并写出 Word 文件，落到 `data/reports/{file_id}.docx`，前端通过 `GET /api/chat/reports/{file_id}` 下载。
+- 每轮用户消息最多规划 `MAX_PLANNER_TURNS`（当前为 5）次。
+- SQL 仍必须经过 `validate_sql`；图表仍只基于查询快照聚合，不另写 GROUP BY SQL。
+- 闲聊是终端节点，不再交回规划。
 
 ### search
 
@@ -281,9 +310,9 @@ python scripts\init.py
 
 ### 当前工作流展示
 
-前端显示六个节点：解析问题 → 检索上下文 → 确定数据表与表结构 → 生成 SQL → 校验 SQL → 执行 SQL。
+前端显示节点：解析问题 → 规划步骤 → 检索上下文 → 确定数据表与表结构 → 生成 SQL → 校验 SQL → 执行 SQL；若本轮出图，再显示分析图表；若本轮出报告，再显示分析报告。规划节点可能出现多次（每条管道结束后再规划），前端会把多次 `planner`/`parse_plan` 合并为一个「规划步骤」，并取最后一次决策。步骤行右侧显示该步耗时（执行中实时计时）；规划、选表、出图、报告等合并节点显示各子步骤耗时之和。没有计时数据的历史消息仍显示「已完成」。
 
-- `mergeDisplayToolParts()` 将 `table_selector`、`route_after_table_selection`、`format_no_table_response`、`load_sql_schema_context` 合并为 `table_context`；后端实际节点仍独立执行。
+- `mergeDisplayToolParts()` 将 `table_selector`、`route_after_table_selection`、`format_no_table_response`、`load_sql_schema_context` 合并为 `table_context`；将报告相关节点合并为 `report_analysis`；后端实际节点仍独立执行。
 - “检索上下文”独立显示召回与图谱补全结果，不能与选表后的结构汇总混为一谈。
 - 数据表模块和“库表结构（供生成 SQL）”按表分组，展示表中文名、英文名、摘要及字段内容。
 - “库表结构（供生成 SQL）”、表关系、业务知识、SQL 是同级分类，不要在库表结构下再加“数据表”这一层。
@@ -506,7 +535,7 @@ SQL 生成链路中，物理表名必须来自：
 
 - 方案中的“数据定位 Agent”目前由 search + table_selector + load_sql_schema_context 组合实现，尚未独立成循环探测 Agent。
 - 方案中的“双盲校验”当前主要是 SQL 语法/安全/表字段校验，尚未实现“SQL 反向解释再与原问题比对”的完整闭环。
-- 方案中的结果分析、自动图表、报告生成、疑点工单、预警推送尚未完整实现。
+- 方案中的结果分析、自动图表、报告生成、疑点工单、预警推送尚未完整实现。当前已有基于查询快照的图表规划和基础分析报告（三部分 Word）能力，仍需按样例继续调正文与维度。
 - 方案中的 MCP 协议支持和 Skills 外部调用尚未作为正式接口落地。
 - 方案中的权限管控目前只具备基础认证与 workspace 隔离，尚未实现表/字段/行级权限。
 - 方案中的用户反馈、知识老化检测、模型调用监控仍需增强。

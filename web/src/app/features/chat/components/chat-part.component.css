@@ -56,6 +56,8 @@
 .chat-part__tool-phase {
   margin-left: auto;
   flex-shrink: 0;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-part__tool-block {
@@ -462,6 +464,29 @@ div.chat-part__context-title {
   margin: 0.2rem 0 0;
   font-size: 0.75rem;
   color: #64748b;
+}
+
+.chat-part__report {
+  background: #fff;
+}
+
+.chat-part__report-section {
+  padding: 0.75rem 0.75rem 0.35rem;
+}
+
+.chat-part__report-heading {
+  margin: 0 0 0.4rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.chat-part__report-text {
+  margin: 0 0 0.65rem;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: #334155;
+  white-space: pre-wrap;
 }
 
 .chat-part__data-summary {

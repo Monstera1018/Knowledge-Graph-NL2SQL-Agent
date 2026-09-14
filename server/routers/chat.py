@@ -1,7 +1,7 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 
 from server.auth.deps import get_current_user, get_workspace_id
 from server.auth.models import AuthUser
@@ -11,6 +11,7 @@ from server.schemas.chat import (
     ChatProtocolInfo,
     SendMessageRequest,
 )
+from adk_agents.copilot.report import resolve_report_file
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -63,4 +64,23 @@ async def send_chat_message(
         body_stream(),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
+    )
+
+
+@router.get("/reports/{file_id}")
+async def download_analysis_report(
+        file_id: str,
+        _: Annotated[AuthUser, Depends(get_current_user)],
+        filename: str = Query(default="分析报告.docx"),
+) -> FileResponse:
+    path = resolve_report_file(file_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="报告文件不存在或已过期")
+    download_name = (filename or "").strip() or "分析报告.docx"
+    if not download_name.lower().endswith(".docx"):
+        download_name += ".docx"
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=download_name,
     )

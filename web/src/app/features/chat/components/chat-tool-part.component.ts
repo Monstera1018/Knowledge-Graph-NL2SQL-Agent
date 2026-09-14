@@ -1,8 +1,9 @@
 import { JsonPipe } from '@angular/common';
-import { Component, input, signal } from '@angular/core';
+import { Component, computed, effect, input, signal } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
 
 import type { ToolPart } from '../../../core/models/chat.models';
+import { formatToolDurationMs, toolPartDurationMs } from '../tool-duration';
 
 type ContextSection = {
   title: string;
@@ -37,6 +38,26 @@ type KnowledgeContextGroup = {
 export class ChatToolPartComponent {
   readonly part = input.required<ToolPart>();
   private readonly expandedSearchContextSections = signal<ReadonlySet<string>>(new Set());
+  private readonly nowMs = signal(Date.now());
+
+  constructor() {
+    effect((onCleanup) => {
+      if (this.part().phase !== 'call') {
+        return;
+      }
+      this.nowMs.set(Date.now());
+      const timer = setInterval(() => this.nowMs.set(Date.now()), 100);
+      onCleanup(() => clearInterval(timer));
+    });
+  }
+
+  protected readonly phaseText = computed(() => {
+    const durationMs = this.displayedDurationMs();
+    if (durationMs != null) {
+      return formatToolDurationMs(durationMs);
+    }
+    return this.part().phase === 'call' ? '执行中' : '已完成';
+  });
 
   protected isContextSectionExpanded(section: ContextSection): boolean {
     return this.part().name !== 'search' || this.expandedSearchContextSections().has(section.title);
@@ -62,6 +83,9 @@ export class ChatToolPartComponent {
   protected stageLabel(): string {
     const labels: Record<string, string> = {
       extractor: '解析问题',
+      planner: '规划步骤',
+      parse_plan: '规划步骤',
+      task_plan: '规划步骤',
       search: '检索上下文',
       table_context: '确定数据表与表结构',
       table_selector: '选择数据表',
@@ -76,17 +100,35 @@ export class ChatToolPartComponent {
       chart_planner: '分析图表',
       parse_chart_spec: '分析图表',
       format_no_chart_snapshot_response: '分析图表',
+      report_analysis: '分析报告',
+      prepare_report_planner_input: '分析报告',
+      report_planner: '分析报告',
+      parse_report_spec: '分析报告',
     };
     return labels[this.part().name] || this.part().title || this.part().name;
   }
 
-  protected phaseText(): string {
-    return this.part().phase === 'call' ? '执行中' : '已完成';
+  private displayedDurationMs(): number | undefined {
+    const part = this.part();
+    if (part.phase === 'call') {
+      if (!part.started_at) {
+        return undefined;
+      }
+      const started = Date.parse(part.started_at);
+      if (!Number.isFinite(started)) {
+        return undefined;
+      }
+      return Math.max(0, this.nowMs() - started);
+    }
+    return toolPartDurationMs(part);
   }
 
   protected businessTitle(): string {
     const titles: Record<string, string> = {
       extractor: '系统正在理解你的问题',
+      planner: '系统正在决定下一步做什么',
+      parse_plan: '系统正在决定下一步做什么',
+      task_plan: '系统正在决定下一步做什么',
       search: '系统正在查找相关业务资料',
       table_context: '系统正在确定可查询的数据表与字段结构',
       table_selector: '系统正在判断需要哪些数据表',
@@ -97,6 +139,7 @@ export class ChatToolPartComponent {
       validate_sql: '系统正在检查查询是否安全可执行',
       execute_sql: '系统正在查询数据',
       chart_analysis: '系统正在规划图表',
+      report_analysis: '系统正在生成分析报告',
     };
     return titles[this.part().name] || '系统正在处理该步骤';
   }
@@ -108,6 +151,9 @@ export class ChatToolPartComponent {
 
     if (this.part().name === 'extractor') {
       return this.extractorSummary();
+    }
+    if (this.part().name === 'task_plan' || this.part().name === 'planner' || this.part().name === 'parse_plan') {
+      return this.taskPlanSummary();
     }
     if (this.part().name === 'search') {
       return this.searchSummary();
@@ -139,6 +185,9 @@ export class ChatToolPartComponent {
     if (this.part().name === 'chart_analysis') {
       return this.chartAnalysisSummary();
     }
+    if (this.part().name === 'report_analysis') {
+      return this.reportAnalysisSummary();
+    }
 
     return '该步骤已处理完成。';
   }
@@ -150,6 +199,9 @@ export class ChatToolPartComponent {
 
     if (this.part().name === 'extractor') {
       return this.extractorItems();
+    }
+    if (this.part().name === 'task_plan' || this.part().name === 'planner' || this.part().name === 'parse_plan') {
+      return this.taskPlanItems();
     }
     if (this.part().name === 'search') {
       return this.contextSections().length
@@ -207,7 +259,11 @@ export class ChatToolPartComponent {
     }
     if (this.part().name === 'chart_analysis') {
       const summary = this.chartAnalysisSummary();
-      return summary ? [summary] : ['已根据上一轮查询结果规划图表。'];
+      return summary ? [summary] : ['已根据当前查询结果规划图表。'];
+    }
+    if (this.part().name === 'report_analysis') {
+      const summary = this.reportAnalysisSummary();
+      return summary ? [summary] : ['已根据当前查询结果生成分析报告。'];
     }
 
     return [];
@@ -216,6 +272,9 @@ export class ChatToolPartComponent {
   protected showBusinessSummary(): boolean {
     return [
       'extractor',
+      'planner',
+      'parse_plan',
+      'task_plan',
       'search',
       'table_context',
       'table_selector',
@@ -226,6 +285,7 @@ export class ChatToolPartComponent {
       'validate_sql',
       'execute_sql',
       'chart_analysis',
+      'report_analysis',
     ].includes(this.part().name);
   }
 
@@ -400,6 +460,9 @@ export class ChatToolPartComponent {
     if (this.part().name === 'extractor') {
       return '正在识别问题中的地区、对象、指标和查询意图。';
     }
+    if (this.part().name === 'task_plan' || this.part().name === 'planner' || this.part().name === 'parse_plan') {
+      return '正在判断本轮是查询数据、生成图表，还是直接回复。';
+    }
     if (this.part().name === 'search') {
       return '正在检索与问题相关的数据表、字段、枚举值、业务知识、历史 SQL 和表关系。';
     }
@@ -428,7 +491,10 @@ export class ChatToolPartComponent {
       return '正在执行业务查询并整理返回结果。';
     }
     if (this.part().name === 'chart_analysis') {
-      return '正在根据检索信息和当前查询结果选择分析维度与图表类型。';
+      return '正在根据检索信息和当前查询结果选择分析维度、图表类型和配色。';
+    }
+    if (this.part().name === 'report_analysis') {
+      return '正在根据当前查询结果撰写总体情况、分类分析和结论。';
     }
     return '正在处理该步骤。';
   }
@@ -455,6 +521,72 @@ export class ChatToolPartComponent {
       items.push(`关键词：${keywords.join('、')}`);
     }
     return items;
+  }
+
+  private taskPlanSummary(): string {
+    const labels = this.taskPlanStepLabels();
+    if (labels.length) {
+      return `本轮将：${labels.join(' → ')}。`;
+    }
+    return '系统已完成本轮能力规划。';
+  }
+
+  private taskPlanItems(): string[] {
+    const result = this.taskPlanResult();
+    const items: string[] = [];
+    const labels = this.taskPlanStepLabels();
+    if (labels.length) {
+      items.push(`执行步骤：${labels.join(' → ')}`);
+    }
+    const reason = this.text(result, 'reason');
+    if (reason) {
+      items.push(`规划说明：${reason}`);
+    }
+    const chartRequest = this.text(result, 'chart_request');
+    if (chartRequest) {
+      items.push(`出图要求：${chartRequest}`);
+    }
+    return items;
+  }
+
+  private taskPlanResult(): Record<string, unknown> | null {
+    const output = this.outputObject();
+    const nested = output?.['result'];
+    if (nested && typeof nested === 'object') {
+      return nested as Record<string, unknown>;
+    }
+    return output;
+  }
+
+  private taskPlanStepLabels(): string[] {
+    const labels: Record<string, string> = {
+      query: '查询数据',
+      chart: '生成图表',
+      chitchat: '对话回复',
+      stop: '结束',
+    };
+    const result = this.taskPlanResult();
+    const decisions = result?.['decisions'];
+    if (Array.isArray(decisions) && decisions.length) {
+      return decisions
+        .map((item) => {
+          const action =
+            item && typeof item === 'object'
+              ? String((item as Record<string, unknown>)['next'] || '').trim()
+              : '';
+          return labels[action] || '';
+        })
+        .filter((item) => Boolean(item) && item !== '结束');
+    }
+    const steps = result?.['steps'];
+    const sequence = Array.isArray(steps)
+      ? steps
+      : result?.['next']
+        ? [result['next']]
+        : [];
+    return sequence
+      .map((item) => labels[String(item || '').trim()] || '')
+      .filter((item) => Boolean(item) && item !== '结束');
   }
 
   private tableSelectorSummary(): string {
@@ -531,6 +663,18 @@ export class ChatToolPartComponent {
       return '已根据检索信息和当前查询结果选定分析维度与图表类型。';
     }
     return '正在根据上一轮查询结果规划图表。';
+  }
+
+  private reportAnalysisSummary(): string {
+    const output = this.outputObject();
+    const summary = this.text(output, 'summary');
+    if (summary) {
+      return summary;
+    }
+    if (output?.['status'] === 'ok') {
+      return '已根据当前查询结果生成分析报告。';
+    }
+    return '正在根据当前查询结果生成分析报告。';
   }
 
   private outputObject(): Record<string, unknown> | null {

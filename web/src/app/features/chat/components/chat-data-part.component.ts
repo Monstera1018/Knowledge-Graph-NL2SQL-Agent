@@ -3,6 +3,7 @@ import { Component, computed, inject, input } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 
+import { ChatApiService } from '../../../core/api/chat-api.service';
 import type { DataPart } from '../../../core/models/chat.models';
 import {
   parseSqlResultSets,
@@ -12,7 +13,7 @@ import {
 } from '../chat-sql-result';
 import { ChatChartComponent } from './chat-chart.component';
 import { ChatSqlResultDialogComponent } from './chat-sql-result-dialog.component';
-import { parseChartSpec } from '../chat-chart';
+import { parseChartSpec, parseChartView, type ChatChartView } from '../chat-chart';
 
 type SelectedTableDetail = {
   name: string;
@@ -28,6 +29,7 @@ type SelectedTableDetail = {
 })
 export class ChatDataPartComponent {
   private readonly dialog = inject(MatDialog);
+  private readonly chatApi = inject(ChatApiService);
 
   readonly part = input.required<DataPart>();
 
@@ -195,6 +197,7 @@ export class ChatDataPartComponent {
       sql_diagnostic: 'SQL 校验说明',
       sql_result: '查询结果',
       chart_spec: '分析图表',
+      analysis_report: '分析报告',
     };
     return labels[kind] || '结构化信息';
   }
@@ -245,5 +248,61 @@ export class ChatDataPartComponent {
       items.push(`包含信息项：${keys.slice(0, 6).join('、')}`);
     }
     return items;
+  }
+
+  protected reportTitle(): string {
+    return this.text('title') || '数据分析报告';
+  }
+
+  protected reportSummary(): string {
+    return this.text('summary');
+  }
+
+  protected reportOverview(): string {
+    return this.text('overview');
+  }
+
+  protected reportConclusions(): string {
+    return this.text('conclusions');
+  }
+
+  protected reportFeasible(): boolean {
+    return this.part().payload['feasible'] === true;
+  }
+
+  protected reportDownloadable(): boolean {
+    return this.reportFeasible() && Boolean(this.text('file_id'));
+  }
+
+  protected reportAnalyses(): Array<{ heading: string; narrative: string; chart: ChatChartView | null }> {
+    const raw = this.part().payload['analyses'];
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        heading: typeof item['heading'] === 'string' ? item['heading'] : '分析维度',
+        narrative: typeof item['narrative'] === 'string' ? item['narrative'] : '',
+        chart: parseChartView(item['chart']),
+      }));
+  }
+
+  protected downloadReport(): void {
+    const fileId = this.text('file_id');
+    if (!fileId) {
+      return;
+    }
+    const filename = this.text('filename') || '分析报告.docx';
+    this.chatApi.downloadReport(fileId, filename).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+      },
+    });
   }
 }

@@ -26,6 +26,7 @@ logs/
 *.jsonl
 data/*.sqlite*
 data/auth/*.json
+data/reports/*.docx
 !data/auth/*.example.json
 
 # 模型、向量化与大模型调用缓存
