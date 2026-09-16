@@ -1,12 +1,12 @@
 # AGENTS.md
 
-本文件用于指导后续 Agent/Codex/开发者在 TYWS 项目中协作开发。内容参考《知识图谱+向量库协同驱动的智能问数建设方案-V4.0》，并结合当前代码实现整理。若建设方案与现阶段代码存在差异，以本文件中“当前实现”为准。
+本文件用于指导后续 Agent/Codex/开发者在本项目中协作开发。内容参考《知识图谱+向量库协同驱动的智能问数建设方案-V4.0》，并结合当前代码实现整理。若建设方案与现阶段代码存在差异，以本文件中“当前实现”为准。
 
-最后核对日期：2026-09-14。依据当前工作区代码（包含尚未提交的修改）更新；运行情况必须在验证时重新检查，不能把历史服务状态或验证结果当作当前保证。后续代码与本文件不一致时，应核查代码并同步文档。
+最后核对日期：2026-09-16。依据当前工作区代码（包含尚未提交的修改）更新；运行情况必须在验证时重新检查，不能把历史服务状态或验证结果当作当前保证。后续代码与本文件不一致时，应核查代码并同步文档。
 
 ## 项目定位
 
-TYWS 是一个面向自然语言问数的产品化原型。目标是让业务人员通过自然语言提出数据问题，系统自动完成问题解析、语义检索、选表、表结构汇总、SQL 生成、SQL 校验、执行查询和结果展示。
+本仓库是 Knowledge-graph NL2SQL agent（自然语言问数助手）。目标是让业务人员通过自然语言提出数据问题，系统自动完成问题解析、语义检索、选表、表结构汇总、SQL 生成、SQL 校验、执行查询和结果展示。对外名称使用「自然语言问数助手」；GitHub / README 使用 `nl2sql-agent`。内部代码标识（如 `TYWS_TABLE`、ADK 工作流名）暂不改。
 
 建设方案中的核心思想是“知识图谱 + 向量库协同驱动”：
 
@@ -292,13 +292,13 @@ python scripts\init.py
 
 已实现页面：
 
+- `/chat`：智能对话（登录后默认进入）
 - `/catalog`：数据目录
 - `/enums`：枚举值
 - `/relations`：表关系
 - `/knowledge`：业务知识
 - `/sql`：历史 SQL
 - `/ingest`：导入任务
-- `/chat`：智能对话
 
 智能对话页：
 
@@ -415,6 +415,9 @@ npm.cmd start
 LLM_MODEL_NAME=openai:...
 OPENAI_API_BASE=...
 OPENAI_API_KEY=...
+LLM_FALLBACK_MODEL_NAME=openai:...
+LLM_FALLBACK_API_BASE=https://ark.cn-beijing.volces.com/api/plan/v3
+LLM_FALLBACK_API_KEY=...
 
 EMBEDDING_MODEL_NAME=openai:...
 EMBEDDING_API_BASE=...
@@ -450,8 +453,12 @@ SQL_READ_DIALECT=sqlite
 
 模型调用入口：
 
-- 智能体模型在 `adk_agents/common.py:get_llm_model()` 配置；当前代码为 `temperature=0.0`、`enable_thinking=False`，并保留 `allowed_openai_params=["enable_thinking"]`，未传 `reasoning_effort`。
-- 通用文本调用在 `tools/llm.py:chat()`，同样设置 `temperature=0.0`，但参数集合与智能体入口不完全相同；修改模型参数时需分别核对两个入口。
+- 智能体聊天模型全部走同一套入口：`adk_agents/common.py:get_llm_model()`。当前使用点包括 extractor、planner、chitchat、table_selector、sql_generator、chart_planner、report_planner。
+- 配置为 `temperature=0.0`、`enable_thinking=False`，并保留 `allowed_openai_params=["enable_thinking"]`，未传 `reasoning_effort`；构造时显式传入 `api_base`/`api_key`/`num_retries=0`。
+- 通用文本调用在 `tools/llm.py:chat()`，与智能体共用 `load_llm_profiles()`。
+- 主套餐读取 `LLM_MODEL_NAME`、`OPENAI_API_BASE`、`OPENAI_API_KEY`（当前常见为 Coding Plan：`https://ark.cn-beijing.volces.com/api/coding/v3`）。
+- 备用套餐读取 `LLM_FALLBACK_MODEL_NAME`、`LLM_FALLBACK_API_BASE`、`LLM_FALLBACK_API_KEY`。Agent Plan 的 OpenAI 兼容地址为 `https://ark.cn-beijing.volces.com/api/plan/v3`，必须使用 Agent Plan 专属 Key，不要和 Coding Plan / 普通方舟 Key 混用。未配齐备用 base 与 key 时不会切换。
+- 仅在限流、突发保护（如 `request burst`）或额度类错误、且尚未向调用方产出内容时切换备用套餐；同套餐不连打。Embedding 仍走 `EMBEDDING_*`，默认不切 Agent Plan。
 - 上述数值是当前代码配置，不是 `.env` 中可直接修改的同名开关。不要将发出的 `enable_thinking=False` 等同于供应商已经保证不输出思考文本。
 
 ## 开发原则

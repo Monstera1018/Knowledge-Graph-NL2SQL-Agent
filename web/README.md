@@ -1,6 +1,6 @@
-# 元数据维护前端
+# 自然语言问数助手前端
 
-Angular 21 + Material 3 + Tailwind CSS 后台维护界面。
+Angular 21 + Material 3 + Tailwind CSS。包含智能对话页与元数据维护界面，对应仓库 `nl2sql-agent`（Knowledge-graph NL2SQL agent）。
 
 ## 启动
 
@@ -17,6 +17,7 @@ npm start
 
 | 路由 | 说明 |
 |------|------|
+| `/chat` | 智能对话（登录后默认进入） |
 | `/catalog` | 数据目录（表 → 列 → 枚举，三栏布局） |
 | `/knowledge` | 业务知识列表与详情 |
 | `/sqls` | SQL 模板列表与内容预览 |

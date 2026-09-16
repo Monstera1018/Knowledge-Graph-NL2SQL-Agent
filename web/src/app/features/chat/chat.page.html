@@ -5,13 +5,13 @@
         <span class="chat-history__title">历史对话</span>
         <button
           type="button"
-          class="chat-history__icon-btn"
+          class="chat-history__new"
           (click)="newChat()"
           [disabled]="sending()"
           aria-label="新对话"
-          title="新对话"
         >
           <mat-icon>edit_square</mat-icon>
+          <span>新对话</span>
         </button>
       </div>
       <div class="chat-history__list">
@@ -76,7 +76,7 @@
             @if (agentsLoading()) {
               加载中…
             } @else {
-              {{ selectedAgent()?.name ?? '选择助手' }}
+              {{ agentDisplayName(selectedAgent()) }}
             }
           </span>
           <mat-icon class="chat-agent-btn__chevron">expand_more</mat-icon>
@@ -92,9 +92,9 @@
                 [class.is-active]="agent.id === selectedAgentId()"
                 (click)="selectAgent(agent.id)"
               >
-                <span class="chat-agent-menu__name">{{ agent.name }}</span>
-                @if (agent.description) {
-                  <span class="chat-agent-menu__desc">{{ agent.description }}</span>
+                <span class="chat-agent-menu__name">{{ agentDisplayName(agent) }}</span>
+                @if (agentSubtitle(agent); as subtitle) {
+                  <span class="chat-agent-menu__desc">{{ subtitle }}</span>
                 }
               </button>
             }

@@ -48,13 +48,13 @@ export class AppShellComponent {
   });
 
   protected readonly navItems: NavItem[] = [
+    { label: '智能对话', path: '/chat', icon: 'forum' },
     { label: '数据目录', path: '/catalog', icon: 'account_tree' },
     { label: '枚举值', path: '/enums', icon: 'format_list_bulleted' },
     { label: '表关系', path: '/relations', icon: 'hub' },
     { label: '业务知识', path: '/knowledge', icon: 'lightbulb' },
     { label: 'SQL', path: '/sql', icon: 'code' },
     { label: '导入任务', path: '/ingest', icon: 'upload_file' },
-    { label: '智能对话', path: '/chat', icon: 'forum' },
   ];
 
   protected toggleSidebar(): void {

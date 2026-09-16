@@ -6,6 +6,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { finalize } from 'rxjs';
 
 import { AuthService } from '../../core/auth/auth.service';
+import { ChatSessionStore } from '../../core/chat/chat-session.store';
 import { formatApiError } from '../../shared/feedback/api-error';
 import { AppSnackService } from '../../shared/feedback/app-snack.service';
 
@@ -19,6 +20,7 @@ export class LoginPage {
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly snack = inject(AppSnackService);
+  private readonly chats = inject(ChatSessionStore);
 
   protected readonly username = signal('admin');
   protected readonly password = signal('admin');
@@ -43,7 +45,8 @@ export class LoginPage {
       .pipe(finalize(() => this.submitting.set(false)))
       .subscribe({
         next: () => {
-          void this.router.navigateByUrl('/catalog');
+          this.chats.prepareFreshChat();
+          void this.router.navigateByUrl('/chat');
         },
         error: (err) => {
           this.error.set(formatApiError(err) || '登录失败');

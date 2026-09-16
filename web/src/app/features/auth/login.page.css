@@ -30,6 +30,13 @@
   color: transparent;
 }
 
+.login-card__title {
+  margin: 0.65rem 0 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
 .login-form {
   display: flex;
   flex-direction: column;

@@ -44,7 +44,8 @@ _CHART_REQUEST_RE = re.compile(
     r"换(个|一种)?颜色|色调|配色|看(一下)?趋势)",
 )
 _REPORT_REQUEST_RE = re.compile(
-    r"(分析报告|生成报告|出一份报告|写(一份)?报告|下载报告|报告文件)",
+    r"(分析报告|生成报告|出一份报告|写(一份)?报告|下载报告|报告文件|"
+    r"出报告|要报告|给我报告|报告呢|报告啊|报告吧|^报告$)",
 )
 _DATA_QUERY_RE = re.compile(r"(查询|清单|明细|统计|有哪些|多少|帮我查|未结清)")
 
@@ -176,6 +177,8 @@ def resolve_extractor_task(
 ) -> str:
     explicit = normalize_extractor_task(extraction.task)
     message = user_message or ""
+    if user_requests_report(message) and not user_requests_new_query(message):
+        return EXTRACTOR_TASK_REPORT
     if (
             explicit == EXTRACTOR_TASK_CHART
             and _DATA_QUERY_RE.search(message)
@@ -194,8 +197,6 @@ def resolve_extractor_task(
         return explicit
     if looks_like_chart_request(message):
         return EXTRACTOR_TASK_CHART
-    if user_requests_report(message) and not user_requests_new_query(message):
-        return EXTRACTOR_TASK_REPORT
     if (extraction.intent or "").strip() == NON_DATA_QUERY_INTENT:
         return EXTRACTOR_TASK_CHITCHAT
     if not (extraction.retrieval_query or "").strip() and not extraction.keywords:

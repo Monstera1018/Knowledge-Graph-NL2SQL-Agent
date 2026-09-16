@@ -86,6 +86,28 @@ export class ChatPage {
     this.agents().find((agent) => agent.id === this.selectedAgentId()),
   );
 
+  protected agentDisplayName(agent: AgentDescriptor | null | undefined): string {
+    if (!agent) {
+      return '选择助手';
+    }
+    if (agent.name === 'TYWS') {
+      return '自然语言问数助手';
+    }
+    return agent.name;
+  }
+
+  protected agentSubtitle(agent: AgentDescriptor): string {
+    const desc = (agent.description || '').trim();
+    const label = this.agentDisplayName(agent);
+    if (!desc || desc === label) {
+      return '';
+    }
+    if (desc.startsWith(`${label}；`)) {
+      return desc.slice(label.length + 1).trim();
+    }
+    return desc;
+  }
+
   protected readonly hasMessages = computed(() => this.messages().length > 0);
   protected readonly showScrollDown = signal(false);
   protected readonly traceSidebarOpen = signal(false);

@@ -1,3 +1,4 @@
+import asyncio
 import re
 import json
 import sys
@@ -482,11 +483,13 @@ def parse_chart_spec(ctx: Context, node_input) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def prepare_report_planner_input(ctx: Context, node_input=None) -> Event:
+async def prepare_report_planner_input(ctx: Context, node_input=None) -> Event:
     """没有查询快照时回到规划；否则带上报告要求和结果概要。"""
     snapshot = load_query_snapshot(ctx)
     if not snapshot:
         return Event(route="no_snapshot", output=node_input)
+    # 问数链路刚连续调用过多次模型，稍候再写报告，降低网关突发限流。
+    await asyncio.sleep(2)
     message = format_report_planner_user_message(
         user_request=resolve_user_message(ctx),
         snapshot=snapshot,

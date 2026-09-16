@@ -47,8 +47,8 @@ class SpaStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
 
 app = FastAPI(
-    title="TYWS",
-    description="",
+    title="nl2sql-agent",
+    description="Knowledge-graph NL2SQL agent（自然语言问数助手）",
     lifespan=lifespan,
 )
 

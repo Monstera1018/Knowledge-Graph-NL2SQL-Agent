@@ -118,6 +118,21 @@ class ReportPlanTest(unittest.TestCase):
         self.assertEqual(plan["next"], PLAN_STEP_REPORT)
         self.assertEqual(plan["steps"], [PLAN_STEP_QUERY, PLAN_STEP_REPORT])
 
+    def test_short_report_followup_uses_snapshot(self):
+        plan = normalize_plan(
+            next_step="query",
+            extraction=RetrievalExtractionResult(
+                retrieval_query="金华地区未结清用户清单",
+                keywords=["金华", "未结清"],
+                intent="查询未结清用户",
+                task="query",
+            ),
+            user_message="报告呢",
+            has_snapshot=True,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_REPORT)
+        self.assertNotIn(PLAN_STEP_QUERY, plan["steps"])
+
     def test_plain_query_does_not_auto_report(self):
         plan = normalize_plan(
             next_step="report",

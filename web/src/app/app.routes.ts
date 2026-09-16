@@ -14,7 +14,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./core/layout/app-shell.component').then((m) => m.AppShellComponent),
     children: [
-      { path: '', redirectTo: 'catalog', pathMatch: 'full' },
+      { path: '', redirectTo: 'chat', pathMatch: 'full' },
+      {
+        path: 'chat',
+        loadComponent: () => import('./features/chat/chat.page').then((m) => m.ChatPage),
+      },
       {
         path: 'catalog',
         loadComponent: () =>
@@ -42,11 +46,7 @@ export const routes: Routes = [
         path: 'ingest',
         loadComponent: () => import('./features/ingest/ingest.page').then((m) => m.IngestPage),
       },
-      {
-        path: 'chat',
-        loadComponent: () => import('./features/chat/chat.page').then((m) => m.ChatPage),
-      },
     ],
   },
-  { path: '**', redirectTo: 'catalog' },
+  { path: '**', redirectTo: 'chat' },
 ];

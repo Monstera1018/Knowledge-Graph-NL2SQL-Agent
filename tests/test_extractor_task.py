@@ -97,6 +97,17 @@ class ExtractorTaskTest(unittest.TestCase):
             EXTRACTOR_TASK_REPORT,
         )
 
+    def test_short_report_followup_overrides_extractor_query(self):
+        self.assertTrue(user_requests_report("报告呢"))
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task="query"), "报告呢"),
+            EXTRACTOR_TASK_REPORT,
+        )
+        self.assertEqual(
+            resolve_extractor_task(_extraction(task="query"), "帮我根据金华地区未结清的用户数据生成分析报告"),
+            EXTRACTOR_TASK_QUERY,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

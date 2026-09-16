@@ -1,10 +1,10 @@
-# TYWS 智能问数 API 调用说明
+# 自然语言问数助手 API 调用说明
 
-本文说明如何**不经过前端页面**，直接调用后端智能体：用自然语言问题做知识/元数据检索，再生成、校验并执行只读 SQL。
+本文说明如何**不经过前端页面**，直接调用后端智能体（Knowledge-graph NL2SQL agent）：用自然语言问题做知识/元数据检索，再生成、校验并执行只读 SQL。
 
 当前**没有**单独的「只生成 SQL」HTTP 接口。问数能力全部挂在聊天 SSE 接口上，前端 `/chat` 页也走同一条链路。
 
-最后核对日期：2026-09-11。以仓库当前代码为准。
+最后核对日期：2026-09-16。以仓库当前代码为准。
 
 ---
 
@@ -156,7 +156,7 @@ Authorization: Bearer <token>
   "agents": [
     {
       "id": "copilot",
-      "name": "TYWS",
+      "name": "自然语言问数助手",
       "description": "自然语言问数助手",
       "capabilities": ["retrieval", "sql", "streaming", "sessions"]
     }

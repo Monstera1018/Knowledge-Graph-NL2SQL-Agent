@@ -118,6 +118,7 @@ export class ChatSessionStore {
   private streamSub: Subscription | undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private loadedKey = '';
+  private pendingFreshChat = false;
 
   readonly sessions = this.sessionsSignal.asReadonly();
   readonly currentId = this.currentIdSignal.asReadonly();
@@ -145,6 +146,18 @@ export class ChatSessionStore {
       const workspaceId = this.workspace.workspaceId();
       this.loadBucket(userId, workspaceId);
     });
+  }
+
+  /** 登录后进入对话页时切到空白新对话，历史会话仍保留。 */
+  prepareFreshChat(): void {
+    this.pendingFreshChat = true;
+    const userId = this.auth.user()?.id ?? '';
+    const workspaceId = this.workspace.workspaceId();
+    const key = chatStorageKey(userId, workspaceId);
+    if (this.loadedKey === key) {
+      this.pendingFreshChat = false;
+      this.newChat();
+    }
   }
 
   toggleHistoryOpen(): void {
@@ -360,6 +373,10 @@ export class ChatSessionStore {
       this.currentIdSignal.set(created.id);
     }
     this.historyOpenSignal.set(saved?.historyOpen !== false);
+    if (this.pendingFreshChat) {
+      this.pendingFreshChat = false;
+      this.newChat();
+    }
   }
 
   private persistSoon(): void {

@@ -1,6 +1,8 @@
-# TYWS 智能问数项目
+# nl2sql-agent
 
-TYWS 是一个面向“自然语言问数”的产品化原型。项目通过 FastAPI 后端、Google ADK Agent 工作流、Neo4j 图谱、Milvus 向量库和 Angular 前端，实现从业务元数据导入、语义检索、选表、生成 SQL、SQL 校验到查询结果展示的完整链路。
+Knowledge-graph NL2SQL agent（自然语言问数助手）
+
+用自然语言问业务数据：系统完成问题解析、图谱与向量检索、选表、生成并校验只读 SQL、执行查询，并支持基于结果出图和生成分析报告。后端为 FastAPI + Google ADK，检索层为 Neo4j 知识图谱与 Milvus 向量库，前端为 Angular。
 
 ## 功能概览
 
@@ -8,8 +10,11 @@ TYWS 是一个面向“自然语言问数”的产品化原型。项目通过 Fa
 - 业务知识维护：业务概念、规则和关联表字段维护。
 - 历史 SQL 管理：沉淀可复用 SQL 案例，并建立 SQL 与表字段关系。
 - Excel 数据导入：从 `resources/data` 导入表结构、枚举值、业务知识、历史 SQL 和表关系。
-- 智能问数：用户输入自然语言问题，系统检索上下文、选择候选表、生成只读 SQL、校验并执行查询。
-- 执行轨迹展示：前端展示 Agent 工作流、工具调用、SQL 结果和错误诊断。
+- 智能问数：用户输入自然语言问题，系统规划下一步、检索上下文、选择候选表、生成只读 SQL、校验并执行查询。
+- 分析图表：在已有查询结果快照上规划图表，按维度聚合展示，不另写 GROUP BY SQL。
+- 分析报告：按「总体情况 / 分类分析（含图表）/ 分析结论」生成 Word 报告，可在对话中下载。
+- 模型套餐切换：主套餐限流或额度用尽后，自动改走火山方舟 Agent Plan 再试一次。
+- 执行轨迹展示：前端展示规划、检索、选表、SQL、图表、报告等步骤及耗时。
 
 ## 技术栈
 
@@ -22,6 +27,7 @@ TYWS 是一个面向“自然语言问数”的产品化原型。项目通过 Fa
 - SQLAlchemy asyncio
 - sqlglot
 - pandas / openpyxl
+- python-docx / matplotlib
 
 数据与检索：
 
@@ -41,12 +47,13 @@ TYWS 是一个面向“自然语言问数”的产品化原型。项目通过 Fa
 ## 目录结构
 
 ```text
-TYWS
+项目根目录
 ├─ adk_agents/              # Google ADK Agent 工作流
 │  ├─ extractor/            # 用户问题检索意图抽取 Agent
-│  └─ copilot/              # 智能问数主 Workflow
+│  └─ copilot/              # 智能问数主 Workflow（规划、问数、出图、报告）
 ├─ data/                    # 本地运行数据、示例库、用户工作区配置
 │  ├─ auth/                 # 用户与 workspace 配置
+│  ├─ reports/              # 分析报告 Word 产出，已加入 .gitignore
 │  └─ dev.sqlite            # 本地 SQLite 示例业务库
 ├─ resources/
 │  ├─ data/                 # Excel 初始化数据
@@ -64,7 +71,7 @@ TYWS
 │  ├─ db.py                 # 业务数据库连接、SQL 执行
 │  ├─ embedding.py          # embedding 调用
 │  ├─ ingest.py             # Excel 导入逻辑
-│  ├─ llm.py                # 普通 LLM 调用
+│  ├─ llm.py                # 普通 LLM 调用与主/备用套餐切换
 │  ├─ retrieval.py          # 语义检索与上下文组装
 │  ├─ sql.py                # SQL 解析、血缘提取、只读校验
 │  └─ vector.py             # Milvus collection 和向量写入/检索
@@ -73,29 +80,40 @@ TYWS
 
 ## 核心问数流程
 
-智能问数主入口在 `adk_agents/copilot/agent.py`，整体流程如下：
+智能问数主入口在 `adk_agents/copilot/agent.py`。每轮用户消息先解析问题，再由 planner 决定下一步：问数、出图、写报告、闲聊或结束。问数内部仍是固定管道；出图和报告都基于本轮已有的查询结果快照，不另写聚合 SQL。
 
 ```text
 用户问题
   -> extractor 抽取检索 query / keywords / intent
-  -> 判断是否为问数问题
-  -> search 调用 Milvus 语义检索
-  -> retrieval.py 回 Neo4j 补齐表、字段、枚举、知识和历史 SQL 上下文
-  -> table_selector 选择候选表
-  -> load_sql_schema_context 加载候选表完整 schema
-  -> sql_generator 生成 SQL
-  -> validate_sql 校验 SQL 只读、安全性、表字段存在性和 EXPLAIN
-  -> execute_sql 执行业务库查询
+  -> planner 选择下一步：query / chart / report / chitchat / stop
+  -> 问数：search（Milvus 召回 + Neo4j 补全）
+       -> table_selector 选择候选表
+       -> load_sql_schema_context 加载完整 schema
+       -> sql_generator 生成 SQL
+       -> validate_sql 校验只读、安全性、表字段和方言
+       -> execute_sql 执行查询，写入结果快照
+       -> 回到 planner
+  -> 出图：chart_planner 基于快照规划图表
+  -> 报告：report_planner 生成三部分正文，写出 Word
   -> FastAPI SSE 流式返回前端
 ```
+
+说明：
+
+- 清单或统计类问题默认先问数，不会因为“可以画图/可以写报告”就直接出图或出报告。
+- 用户直接要求出图或分析报告、但还没有查询快照时，planner 会先问数，再继续出图或出报告。
+- 同一会话里可以说「生成分析报告」「报告呢」，系统会尽量复用已有查询结果，不必重新取数。
+- 分析报告约定三个部分：总体情况、分类分析（可嵌入图表）、分析结论。文件落到 `data/reports/{file_id}.docx`。
+- 每轮用户消息最多规划 5 次。闲聊是终端节点，不再交回规划。
 
 后端聊天接口：
 
 ```text
 POST /api/chat/sessions/{session_id}/messages
+GET  /api/chat/reports/{file_id}
 ```
 
-前端通过 `fetch + ReadableStream` 消费 SSE 事件，事件处理在 `web/src/app/features/chat/chat-stream.ts`。
+前端通过 `fetch + ReadableStream` 消费 SSE 事件，事件处理在 `web/src/app/features/chat/chat-stream.ts`。对话页会把多次规划合并为一个「规划步骤」，并展示检索、选表、SQL、图表和报告节点。
 
 ## 环境变量
 
@@ -103,15 +121,30 @@ POST /api/chat/sessions/{session_id}/messages
 
 ### 大模型配置
 
-当前项目按火山引擎 Coding Plan OpenAI 兼容接口配置：
+聊天、规划、选表、生成 SQL、出图和报告都走同一套入口：`adk_agents/common.py:get_llm_model()`。通用文本调用在 `tools/llm.py:chat()`，与智能体共用主/备用套餐配置。
+
+主套餐按火山引擎 Coding Plan OpenAI 兼容接口配置：
 
 ```env
-ARK_API_KEY=替换为你的火山方舟 API Key
+ARK_API_KEY=替换为你的 Coding Plan API Key
 
 LLM_MODEL_NAME=openai:ark-code-latest
 OPENAI_API_BASE=https://ark.cn-beijing.volces.com/api/coding/v3
 OPENAI_API_KEY=${ARK_API_KEY}
 ```
+
+备用套餐走 Agent Plan。主套餐遇到限流、突发保护（如 `request burst`）或额度用尽，且这轮还没产出内容时，会自动换套餐再试一次；同套餐不会连打。Agent Plan 必须使用专属 Key，不要和 Coding Plan / 普通方舟 Key 混用。未配齐备用地址和 Key 时不会切换。
+
+```env
+ARK_AGENT_PLAN_API_KEY=替换为你的 Agent Plan 专属 Key
+LLM_FALLBACK_MODEL_NAME=openai:ark-code-latest
+LLM_FALLBACK_API_BASE=https://ark.cn-beijing.volces.com/api/plan/v3
+LLM_FALLBACK_API_KEY=${ARK_AGENT_PLAN_API_KEY}
+```
+
+`LLM_FALLBACK_MODEL_NAME` 需在 Agent Plan 套餐支持矩阵里。`ark-code-latest` 是 Auto 模型；也可以改成套餐中已开通的其它模型，例如 `openai:deepseek-v4-flash`。
+
+修改 `.env` 后必须重启后端，备用套餐才会生效。Embedding 仍走下面的 `EMBEDDING_*`，默认不切 Agent Plan。
 
 表结构导入时如果开启表描述生成，会调用大模型：
 
@@ -320,6 +353,7 @@ resources/data/枚举值DEV.before_delete_invalid_rows.xlsx
 Neo4j：GRAPH_URI / GRAPH_USER / GRAPH_PASSWORD
 Milvus：VECTOR_URI / VECTOR_COLLECTION_TABLE / VECTOR_COLLECTION_ENUM / VECTOR_COLLECTION_KNOWLEDGE / VECTOR_COLLECTION_SQL
 大模型接口：LLM_MODEL_NAME / OPENAI_API_BASE / OPENAI_API_KEY
+备用套餐（可选）：LLM_FALLBACK_MODEL_NAME / LLM_FALLBACK_API_BASE / LLM_FALLBACK_API_KEY
 Embedding 接口：EMBEDDING_MODEL_NAME / EMBEDDING_API_BASE / EMBEDDING_API_KEY
 业务数据库：DATABASE_URL 或 DATABASE_DRIVER + DATABASE_HOST 等配置
 ```
@@ -373,7 +407,7 @@ adk_agents/copilot/agent.py
   -> FastAPI /api/chat/sessions/{session_id}/messages
   -> server/chat/service.py 创建 ADK Runner
   -> 加载 adk_agents/copilot/agent.py 中的 workflow
-  -> 调用检索、选表、SQL 生成、SQL 校验、SQL 执行等工具
+  -> 按规划调用检索、选表、SQL 生成/校验/执行，以及出图或分析报告
   -> 通过 SSE 流式返回前端
 ```
 
@@ -413,7 +447,7 @@ http://localhost:4200
 1. 确认 Neo4j 已启动
 2. 确认 Milvus 已启动
 3. 确认业务数据库可连接
-4. 确认 .env 中大模型和 embedding 接口配置正确
+4. 确认 .env 中大模型和 embedding 接口配置正确；如需限流切换，同时配好 Agent Plan 备用套餐
 5. 如数据有变化，先执行 python scripts/init.py 初始化 Neo4j 和 Milvus
 6. 启动后端：uvicorn server.app:app --host 127.0.0.1 --port 8000
    开发热更新可改用：uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
@@ -469,14 +503,23 @@ default
 
 ```text
 /login      登录页
+/chat       智能问数聊天页面，支持查询结果、分析图表和分析报告下载；登录后默认进入空白新对话
 /catalog    数据目录，维护表、字段、枚举、表关系
 /enums      枚举值列表，展示枚举值及其所属表、字段信息
 /relations  表关系列表，展示来源表、目标表和关联条件
 /knowledge  业务知识维护
 /sql        历史 SQL 维护
 /ingest     Excel 导入任务页面
-/chat       智能问数聊天页面
 ```
+
+智能对话页工作流展示顺序：
+
+```text
+解析问题 → 规划步骤 → 检索上下文 → 确定数据表与表结构 → 生成 SQL → 校验 SQL → 执行 SQL
+若本轮出图，再显示分析图表；若本轮出报告，再显示分析报告及 Word 下载
+```
+
+规划节点在问数、出图、报告结束后可能再次出现，前端会合并为一个「规划步骤」，并取最后一次决策。步骤行显示耗时；检索上下文里的分类默认收起，点开后再看明细。
 
 ### 元数据列表分页
 
@@ -610,7 +653,18 @@ python scripts\init.py
 - 校验 `历史SQLDEV.xlsx` 中 SQL 引用的物理表字段是否在表结构里存在。
 - 必要时删除异常行或补齐表结构。
 
-### 5. `DATABASE_URL` 指向旧路径
+### 5. 模型接口提示限流或无法生成报告
+
+原因：火山 Coding Plan 触发了突发保护或额度限制。若已配置 Agent Plan 备用套餐，后端会自动换套餐再试；两套都失败时，对话里会提示稍后再发「生成分析报告」，不必重新取数。
+
+处理：
+
+- 确认 `.env` 中 `LLM_FALLBACK_API_BASE` 为 `https://ark.cn-beijing.volces.com/api/plan/v3`。
+- 确认 `ARK_AGENT_PLAN_API_KEY` 是 Agent Plan 专属 Key，不是 Coding Plan Key。
+- 修改 `.env` 后重启后端。
+- 同一会话直接发送「生成分析报告」，不要把整句取数问题再发一遍。
+
+### 6. `DATABASE_URL` 指向旧路径
 
 如果 `.env` 中存在类似 macOS 路径：
 

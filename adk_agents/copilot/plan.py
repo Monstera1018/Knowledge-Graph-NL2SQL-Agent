@@ -260,6 +260,19 @@ def normalize_plan(
         PLAN_STEP_STOP,
     }:
         parsed_next = PLAN_STEP_QUERY
+    if (
+        user_wants_report
+        and has_snapshot
+        and not user_requests_new_query(user_message)
+        and parsed_next == PLAN_STEP_QUERY
+        and code not in {
+            OBS_NO_TABLES,
+            OBS_VALIDATION_FAILED,
+            OBS_QUERY_FAILED,
+            OBS_NO_SNAPSHOT,
+        }
+    ):
+        parsed_next = PLAN_STEP_REPORT
 
     previous_request = ""
     previous_decisions: list[dict[str, str]] = []

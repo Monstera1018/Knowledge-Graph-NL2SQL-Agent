@@ -16,6 +16,7 @@ from server.chat.protocol import (
     new_turn_id,
     sse_line,
 )
+from tools.llm import is_llm_quota_or_rate_limit_error
 
 _COPILOT_AGENT_ID = "copilot"
 _COPILOT_APP_NAME = "TYWS-Copilot"
@@ -815,6 +816,15 @@ def _build_workflow_detail(active_stage: str, done_stages: set[str]) -> str:
     return "\n".join(lines)
 
 
+def _user_facing_runtime_error(exc: BaseException) -> str:
+    if is_llm_quota_or_rate_limit_error(exc):
+        return (
+            "模型接口触发了限流保护，刚才的查询结果仍然可用。"
+            "请稍等片刻后再发送「生成分析报告」，不必重新取数。"
+        )
+    return str(exc)
+
+
 class ChatService:
     def __init__(self) -> None:
         self._copilot_runtime = AdkCopilotRuntime()
@@ -826,7 +836,7 @@ class ChatService:
         return [
             AgentDescriptor(
                 id=_COPILOT_AGENT_ID,
-                name="TYWS",
+                name="自然语言问数助手",
                 description=description,
                 capabilities=["retrieval", "sql", "streaming", "sessions"],
             ),
@@ -1487,7 +1497,7 @@ class ChatService:
                 type=StreamEventType.ERROR,
                 session_id=session_id,
                 turn_id=turn_id,
-                message=str(exc),
+                message=_user_facing_runtime_error(exc),
                 code="copilot_runtime_error",
                 recoverable=True,
             ))
