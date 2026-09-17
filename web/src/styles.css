@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/noto-sans-sc/wght.css';
+@import 'material-symbols/outlined.css';
+@import './app/shared/styles/app-btn.css';
+@import './app/shared/styles/app-search.css';
+@import './app/shared/styles/app-chip.css';
+@import './app/shared/styles/app-tooltip.css';
+@import './app/shared/styles/workbench-layout.css';
+@import './app/shared/styles/entity-form.css';
+@import './app/shared/styles/app-feedback.css';
+
+@theme {
+  --font-sans: 'Noto Sans SC Variable', 'Noto Sans SC', ui-sans-serif, system-ui, sans-serif;
+  --color-surface: #ffffff;
+  --color-sidebar: #f8f9fa;
+  --color-panel: #ffffff;
+  --color-border: #e8eaed;
+  --color-muted: #5f6368;
+}
+
+/*
+ * 全局统一 Material Symbols 可变字体轴
+ * - FILL  0 = Outlined 线框风格
+ * - wght  100–700，300 比默认 400 更细，更接近现代 UI 图标感
+ * - GRAD  0 = 无渐变强调
+ * - opsz  建议接近实际渲染字号（小图标 20–24，大图标可覆盖）
+ */
+:root {
+  --mat-symbol-fill: 0;
+  --mat-symbol-wght: 300;
+  --mat-symbol-grad: 0;
+  --mat-symbol-opsz: 24;
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background-color: var(--color-surface);
+  color: #0f172a;
+  font-family: var(--font-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono {
+  font-family: var(--font-sans), sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 覆盖 npm 包默认 wght:400，统一 Material Symbols Outlined */
+.material-symbols-outlined,
+mat-icon.mat-ligature-font {
+  font-family: 'Material Symbols Outlined', sans-serif;
+  font-weight: 300;
+  font-style: normal;
+  font-variation-settings:
+    'FILL' var(--mat-symbol-fill),
+    'wght' var(--mat-symbol-wght),
+    'GRAD' var(--mat-symbol-grad),
+    'opsz' var(--mat-symbol-opsz);
+  letter-spacing: normal;
+  text-transform: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* 空状态、上传区等大号装饰图标：opsz 跟随字号更锐利 */
+mat-icon.icon-lg {
+  --mat-symbol-opsz: 40;
+}

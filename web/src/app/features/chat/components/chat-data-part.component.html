@@ -1,0 +1,245 @@
+<div class="chat-part chat-part--data">
+  @if (part().title && !isCompactPlan() && genericKind() !== 'sql_result' && genericKind() !== 'chart_spec') {
+    <div class="chat-part__data-title">{{ part().title }}</div>
+  }
+
+  @if (part().schema === 'table_list' && rows().length) {
+    <div class="chat-part__table-wrap">
+      <table class="chat-part__table">
+        <thead>
+          <tr>
+            <th>表名</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.name) {
+            <tr>
+              <td class="font-mono">{{ row.name }}</td>
+              <td>{{ row.comment || row.description || '无说明' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'schema_plan') {
+    <div class="chat-part__plan-card">
+      <div class="chat-part__plan-head">
+        <div class="chat-part__plan-title">选表结果</div>
+        <div class="chat-part__plan-meta">
+          @if (selectedTableDetails().length) {
+            已选 {{ selectedTableDetails().length }} 张表
+          } @else {
+            未选表
+          }
+        </div>
+      </div>
+      <div class="chat-part__plan-content">
+        @if (selectedTableDetails().length) {
+          <div class="chat-part__plan-tables" aria-label="已选数据表">
+            @for (table of selectedTableDetails(); track table.name) {
+              <div class="chat-part__plan-table">
+                <div class="chat-part__plan-table-name">
+                  {{ table.comment || table.description || '未命名数据表' }}
+                </div>
+                <div class="chat-part__plan-table-code font-mono">{{ table.name }}</div>
+              </div>
+            }
+          </div>
+        } @else {
+          <p class="chat-part__plan-empty">本次未匹配到需要查询的数据表。</p>
+        }
+        @if (text('reasoning')) {
+          <p class="chat-part__plan-reason">{{ text('reasoning') }}</p>
+        }
+      </div>
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'sql_diagnostic') {
+    <div
+      class="chat-part__data-summary chat-part__data-summary--diagnostic"
+      [class.chat-part__data-summary--diagnostic-repair]="isRepairDiagnostic()"
+    >
+      @if (isRepairDiagnostic()) {
+        <p class="chat-part__diag-title">SQL 校验未通过</p>
+        <p>已根据错误信息重新生成 SQL，请稍候查看更新后的查询说明与语句。</p>
+      } @else {
+        <p class="chat-part__diag-title">查询未完成</p>
+        <p>系统已尝试修复，但当前查询仍未能成功执行。</p>
+      }
+      @if (values('errors').length) {
+        <ul class="chat-part__data-list">
+          @for (item of values('errors'); track item) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+      @if (retryCount() > 0) {
+        <p class="chat-part__diag-meta">已尝试 {{ retryCount() }} 次修复</p>
+      }
+      @if (text('checked_sql')) {
+        <details>
+          <summary>查看失败 SQL</summary>
+          <pre class="chat-part__tool-block"><code>{{ text('checked_sql') }}</code></pre>
+        </details>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'sql_result') {
+    <div class="chat-part__result">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">查询结果</div>
+        <div class="chat-part__result-meta">
+          {{ sqlResultSets().length }} 个结果集 / {{ sqlResultRowCount() }} 行
+        </div>
+      </div>
+
+      @if (!sqlResultSets().length) {
+        <div class="chat-part__empty-result">
+          {{ sqlResultMessage() || '查询已执行，但没有可展示的数据行。' }}
+        </div>
+      }
+
+      @for (result of sqlResultSets(); track $index) {
+        <div class="chat-part__result-table">
+          <div class="chat-part__table-wrap">
+            <table class="chat-part__table chat-part__table--result">
+              <thead>
+                <tr>
+                  @for (col of result.columns; track col) {
+                    <th>{{ col }}</th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @if (!result.rows.length) {
+                  <tr>
+                    <td [attr.colspan]="result.columns.length || 1">（无数据）</td>
+                  </tr>
+                } @else {
+                  @for (row of previewRows(result); track $index) {
+                    <tr>
+                      @for (col of result.columns; track col) {
+                        <td>{{ row[col] || '' }}</td>
+                      }
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          </div>
+          @if (hasMoreRows(result)) {
+            <div class="chat-part__result-foot">
+              <button
+                type="button"
+                class="app-btn app-btn--sm chat-part__result-more"
+                (click)="openFullResult(result, $index)"
+              >
+                <mat-icon>open_in_full</mat-icon>
+                查看全部 {{ result.rows.length }} 行
+              </button>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'chart_spec') {
+    <div class="chat-part__chart">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">分析图表</div>
+        <div class="chat-part__result-meta">
+          @if (chartSpec().feasible) {
+            {{ chartSpec().charts.length }} 张图表
+          } @else {
+            未生成图表
+          }
+        </div>
+      </div>
+      @if (chartSpec().summary) {
+        <p class="chat-part__chart-summary">
+          @if (chartSpec().feasible) {
+            {{ chartSpec().summary }}
+          } @else {
+            无法生成：{{ chartSpec().summary }}
+          }
+        </p>
+      }
+      @for (chart of chartSpec().charts; track $index) {
+        <section class="chat-part__chart-item">
+          <div class="chat-part__chart-item-head">
+            <h3 class="chat-part__chart-item-title">{{ chart.title }}</h3>
+            @if (chart.note) {
+              <p class="chat-part__chart-item-note">{{ chart.note }}</p>
+            }
+          </div>
+          <app-chat-chart [spec]="chart" />
+        </section>
+      }
+    </div>
+  } @else if (part().schema === 'generic' && genericKind() === 'analysis_report') {
+    <div class="chat-part__report">
+      <div class="chat-part__result-head">
+        <div class="chat-part__result-title">{{ reportTitle() }}</div>
+        <div class="chat-part__result-meta">
+          @if (reportDownloadable()) {
+            可下载 Word
+          } @else if (!reportFeasible()) {
+            未能生成
+          }
+        </div>
+      </div>
+      @if (reportSummary()) {
+        <p class="chat-part__chart-summary">{{ reportSummary() }}</p>
+      }
+      @if (reportDownloadable()) {
+        <div class="chat-part__result-foot">
+          <button type="button" class="app-btn app-btn--sm chat-part__result-more" (click)="downloadReport()">
+            <mat-icon>download</mat-icon>
+            下载分析报告
+          </button>
+        </div>
+      }
+      @if (reportOverview()) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">一、总体情况</h3>
+          <p class="chat-part__report-text">{{ reportOverview() }}</p>
+        </section>
+      }
+      @for (item of reportAnalyses(); track $index) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">{{ $index === 0 ? '二、分类分析 · ' : '' }}{{ item.heading }}</h3>
+          @if (item.narrative) {
+            <p class="chat-part__report-text">{{ item.narrative }}</p>
+          }
+          @if (item.chart; as chart) {
+            <app-chat-chart [spec]="chart" />
+          }
+        </section>
+      }
+      @if (reportConclusions()) {
+        <section class="chat-part__report-section">
+          <h3 class="chat-part__report-heading">三、分析结论</h3>
+          <p class="chat-part__report-text">{{ reportConclusions() }}</p>
+        </section>
+      }
+    </div>
+  } @else {
+    <div class="chat-part__business">
+      <div class="chat-part__business-title">{{ fallbackTitle() }}</div>
+      <p class="chat-part__business-summary">{{ fallbackSummary() }}</p>
+      @if (fallbackItems().length) {
+        <ul class="chat-part__business-list">
+          @for (item of fallbackItems(); track item) {
+            <li>{{ item }}</li>
+          }
+        </ul>
+      }
+    </div>
+    <details class="chat-part__tech-details">
+      <summary>查看技术详情</summary>
+      <pre class="chat-part__tool-block"><code>{{ part().payload | json }}</code></pre>
+    </details>
+  }
+
+  @if (part().truncated) {
+    <p class="chat-part__truncated">结果已截断</p>
+  }
+</div>

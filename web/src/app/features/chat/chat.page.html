@@ -1,0 +1,229 @@
+<div class="chat-page">
+  @if (historyOpen()) {
+    <aside class="chat-history" aria-label="历史会话">
+      <div class="chat-history__head">
+        <span class="chat-history__title">历史对话</span>
+        <button
+          type="button"
+          class="chat-history__new"
+          (click)="newChat()"
+          [disabled]="sending()"
+          aria-label="新对话"
+        >
+          <mat-icon>edit_square</mat-icon>
+          <span>新对话</span>
+        </button>
+      </div>
+      <div class="chat-history__list">
+        @if (!historySessions().length) {
+          <p class="chat-history__empty">还没有历史对话</p>
+        } @else {
+          @for (item of historySessions(); track item.id) {
+            <button
+              type="button"
+              class="chat-history__item"
+              [class.is-active]="item.id === currentSessionId()"
+              [class.is-live]="item.id === sendingSessionId()"
+              (click)="selectHistorySession(item.id)"
+            >
+              <span class="chat-history__item-main">
+                <span class="chat-history__item-title">{{ item.title }}</span>
+                <span class="chat-history__item-time">{{ historyTime(item.updatedAt) }}</span>
+              </span>
+              <span
+                class="chat-history__item-delete"
+                role="button"
+                tabindex="0"
+                aria-label="删除对话"
+                (click)="deleteHistorySession($event, item.id)"
+                (keydown.enter)="deleteHistorySession($event, item.id)"
+              >
+                <mat-icon>close</mat-icon>
+              </span>
+            </button>
+          }
+        }
+      </div>
+    </aside>
+  }
+
+  <div class="chat-stage">
+    <header class="chat-header">
+    <div class="chat-header__inner">
+      <div class="chat-header__left">
+        <button
+          type="button"
+          class="chat-header__history"
+          (click)="toggleHistory()"
+          [class.is-active]="historyOpen()"
+          aria-label="历史对话"
+          [attr.aria-pressed]="historyOpen()"
+          title="历史对话"
+        >
+          <mat-icon>history</mat-icon>
+          <span>历史</span>
+        </button>
+
+        <button
+          type="button"
+          class="chat-agent-btn"
+          (click)="toggleAgentMenu()"
+          [disabled]="agentsLoading() || !agents().length"
+          aria-haspopup="listbox"
+          [attr.aria-expanded]="agentMenuOpen()"
+        >
+          <span class="chat-agent-btn__label">
+            @if (agentsLoading()) {
+              加载中…
+            } @else {
+              {{ agentDisplayName(selectedAgent()) }}
+            }
+          </span>
+          <mat-icon class="chat-agent-btn__chevron">expand_more</mat-icon>
+        </button>
+
+        @if (agentMenuOpen() && agents().length) {
+          <div class="chat-agent-menu chat-menu-enter" role="listbox">
+            @for (agent of agents(); track agent.id) {
+              <button
+                type="button"
+                class="chat-agent-menu__item"
+                role="option"
+                [class.is-active]="agent.id === selectedAgentId()"
+                (click)="selectAgent(agent.id)"
+              >
+                <span class="chat-agent-menu__name">{{ agentDisplayName(agent) }}</span>
+                @if (agentSubtitle(agent); as subtitle) {
+                  <span class="chat-agent-menu__desc">{{ subtitle }}</span>
+                }
+              </button>
+            }
+          </div>
+        }
+      </div>
+
+      <div class="chat-header__actions">
+        <button
+          type="button"
+          class="chat-header__trace"
+          (click)="toggleTraceSidebar()"
+          [disabled]="!hasTrace()"
+          [class.is-active]="traceSidebarOpen()"
+          [class.is-live]="activeTrace()?.streaming"
+          title="执行追踪"
+        >
+          <mat-icon>timeline</mat-icon>
+          <span>追踪</span>
+          @if (traceStepCount() > 0) {
+            <span class="chat-header__trace-badge">{{ traceStepCount() }}</span>
+          }
+        </button>
+
+        <button
+          type="button"
+          class="chat-header__new"
+          (click)="newChat()"
+          [disabled]="sending()"
+          aria-label="新对话"
+        >
+          <mat-icon>edit_square</mat-icon>
+          <span>新对话</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="chat-body">
+    <div class="chat-main">
+      <div class="chat-thread" #thread (scroll)="onThreadScroll()">
+        <div
+          class="chat-thread__inner"
+          #threadInner
+          [@.disabled]="reduceMotion()"
+          [@sessionTransition]="currentSessionId()"
+        >
+          @if (!hasMessages()) {
+            <section class="chat-welcome">
+              <h1 class="chat-welcome__title">有什么可以帮你的？</h1>
+              <div class="chat-suggestions">
+                @for (item of suggestions; track item) {
+                  <button
+                    type="button"
+                    class="chat-suggestion"
+                    (click)="useSuggestion(item)"
+                    [disabled]="sending()"
+                  >
+                    {{ item }}
+                  </button>
+                }
+              </div>
+            </section>
+          } @else {
+            @for (msg of messages(); track msg.id) {
+              <app-chat-message [message]="msg" />
+            }
+          }
+          <div class="chat-thread__bottom" #threadBottom aria-hidden="true"></div>
+        </div>
+      </div>
+
+      @if (showScrollDown()) {
+        <button
+          type="button"
+          class="chat-scroll-down"
+          (click)="scrollToBottom()"
+          aria-label="回到底部"
+        >
+          <mat-icon>arrow_downward</mat-icon>
+        </button>
+      }
+
+      <footer class="chat-composer-wrap">
+        <div class="chat-composer-shell">
+          <div class="chat-composer">
+            <button type="button" class="chat-composer__attach" disabled aria-hidden="true" tabindex="-1">
+              <mat-icon>add</mat-icon>
+            </button>
+            <label class="sr-only" for="chat-input">输入消息</label>
+            <textarea
+              #chatInput
+              id="chat-input"
+              class="chat-composer__input"
+              placeholder="有问题，尽管问"
+              [ngModel]="draft()"
+              (ngModelChange)="onDraftChange($event)"
+              (input)="onComposerInput()"
+              (keydown)="onComposerKeydown($event)"
+              [disabled]="agentsLoading() || !selectedAgentId()"
+            ></textarea>
+            <button
+              type="button"
+              class="chat-composer__send"
+              (click)="send()"
+              [disabled]="sending() || !draft().trim() || !selectedAgentId()"
+              [class.is-active]="draft().trim().length > 0"
+              aria-label="发送"
+            >
+              @if (sending()) {
+                <mat-spinner diameter="20" />
+              } @else {
+                <mat-icon>arrow_upward</mat-icon>
+              }
+            </button>
+          </div>
+          <p class="chat-composer__hint">智能体可能会犯错，重要信息请在元数据目录中核对。</p>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  @if (hasTrace() && traceSidebarOpen()) {
+    <app-chat-trace-sidebar
+      [open]="true"
+      [content]="activeTrace()?.content ?? ''"
+      [streaming]="activeTrace()?.streaming ?? false"
+      (openChange)="setTraceSidebarOpen($event)"
+    />
+  }
+  </div>
+</div>

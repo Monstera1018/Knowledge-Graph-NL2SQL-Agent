@@ -1,0 +1,115 @@
+/* 全局描边工具按钮（工具栏、详情、弹窗等） */
+.app-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  height: 2rem;
+  padding: 0 0.625rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #fff;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  color: #475569;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.app-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.app-btn mat-icon {
+  width: 1rem !important;
+  height: 1rem !important;
+  font-size: 1rem !important;
+}
+
+.app-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.app-btn--icon {
+  width: 2rem;
+  padding: 0;
+}
+
+.app-btn--sm {
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+}
+
+.app-btn--xs {
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0;
+}
+
+.app-btn--xs mat-icon {
+  width: 0.875rem !important;
+  height: 0.875rem !important;
+  font-size: 0.875rem !important;
+}
+
+.app-btn--danger {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+.app-btn--danger:hover:not(:disabled) {
+  background: #fef2f2;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+
+.app-btn--accent {
+  color: #0369a1;
+  border-color: #bae6fd;
+  background: #f0f9ff;
+}
+
+.app-btn--accent:hover:not(:disabled) {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #0284c7;
+}
+
+.app-btn--confirm {
+  color: #059669;
+  border-color: #a7f3d0;
+}
+
+.app-btn--confirm:hover:not(:disabled) {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+.app-btn mat-icon.is-spinning {
+  animation: app-spin 0.65s ease;
+}
+
+@keyframes app-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

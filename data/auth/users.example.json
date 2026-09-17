@@ -1,0 +1,10 @@
+{
+  "users": [
+    {
+      "id": "local-admin",
+      "username": "admin",
+      "display_name": "本地管理员",
+      "password": "replace-with-a-local-password"
+    }
+  ]
+}

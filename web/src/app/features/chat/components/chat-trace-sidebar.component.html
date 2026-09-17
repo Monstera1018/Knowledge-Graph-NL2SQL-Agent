@@ -1,0 +1,45 @@
+@if (open()) {
+  <div class="trace-overlay" aria-modal="true" role="dialog" aria-labelledby="trace-panel-title">
+    <button
+      type="button"
+      class="trace-overlay__backdrop"
+      (click)="close()"
+      aria-label="关闭执行追踪"
+    ></button>
+
+    <div class="trace-panel">
+      <header class="trace-panel__head">
+        <div class="trace-panel__head-main">
+          <div class="trace-panel__head-icon" aria-hidden="true">
+            <mat-icon>timeline</mat-icon>
+          </div>
+          <div class="trace-panel__head-text">
+            <div class="trace-panel__title-row">
+              <h2 id="trace-panel-title" class="trace-panel__title">执行追踪</h2>
+              @if (stepCount() > 0) {
+                <span class="trace-panel__count">{{ stepCount() }} 步</span>
+              }
+              @if (streaming()) {
+                <span class="trace-panel__live">更新中</span>
+              }
+            </div>
+            <p class="trace-panel__subtitle">检索 → 规划 → 探查 → SQL</p>
+            <p class="trace-panel__hint">用于解释系统如何找到表、生成并执行 SQL</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="trace-panel__close"
+          (click)="close()"
+          aria-label="关闭"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
+      </header>
+
+      <div class="trace-panel__body">
+        <app-chat-trace-steps [content]="content()" [streaming]="streaming()" />
+      </div>
+    </div>
+  </div>
+}

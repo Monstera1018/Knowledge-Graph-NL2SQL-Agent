@@ -1,0 +1,380 @@
+<div class="workbench">
+  <header class="workbench__header">
+    <h1 class="workbench__title">业务知识</h1>
+    <p class="workbench__hint">浏览和维护业务知识</p>
+    <button
+      type="button"
+      class="app-btn workbench__header-action"
+      [disabled]="refreshing()"
+      (click)="refresh()"
+    >
+      <mat-icon [class.is-spinning]="refreshing()">refresh</mat-icon>
+      刷新
+    </button>
+  </header>
+
+  <div class="workbench__body workbench__body--2col">
+    <section class="workbench__pane">
+      <div class="workbench__pane-head">
+        <div class="workbench__pane-toolbar">
+          <label class="app-search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              [ngModel]="query()"
+              (ngModelChange)="onQueryChange($event)"
+              placeholder="搜索知识"
+              autocomplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            class="app-btn app-btn--icon"
+            aria-label="新建知识"
+            (click)="startCreate()"
+          >
+            <mat-icon>add</mat-icon>
+          </button>
+        </div>
+        <div class="workbench__pane-meta">
+          共 {{ total() }} 条
+          @if (items().length < total()) {
+            <span class="workbench__pane-meta-more">（已显示 {{ items().length }}）</span>
+          }
+        </div>
+      </div>
+
+      <div class="workbench__pane-list">
+        @if (loading() && items().length === 0) {
+          <div class="workbench__pane-loading">
+            <mat-spinner diameter="28" />
+          </div>
+        } @else if (items().length === 0) {
+          <app-empty-state
+            icon="lightbulb"
+            title="暂无知识条目"
+            [description]="query() ? '搜索无匹配结果' : '点击上方 + 新建知识条目'"
+          />
+        } @else {
+          @for (item of items(); track item.uuid) {
+            <button
+              type="button"
+              class="workbench__item"
+              [class.workbench__item--active]="selected()?.uuid === item.uuid"
+              (click)="selectItem(item)"
+            >
+              <div class="workbench__item-name">{{ item.name }}</div>
+              <div class="workbench__item-meta">{{ item.description || '无描述' }}</div>
+            </button>
+          }
+        }
+      </div>
+    </section>
+
+    <section class="workbench__detail">
+      @if (formMode() === 'create') {
+        <div class="workbench__detail-scroll">
+          <article class="detail-card detail-card--form">
+            <header class="entity-form__header">
+              <div class="entity-form__header-main">
+                <span class="detail-card__badge detail-card__badge--knowledge">知识</span>
+                <h2 class="entity-form__title">新建知识</h2>
+                <p class="entity-form__subtitle">填写名称、描述及关联的表与列</p>
+              </div>
+              <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelForm()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </header>
+            <form class="entity-form" (ngSubmit)="saveForm($event)">
+              <div class="entity-form__body">
+                <div class="entity-form__group">
+                  <label class="entity-form__label" for="create-knowledge-name">名称</label>
+                  <input
+                    id="create-knowledge-name"
+                    class="entity-form__input"
+                    type="text"
+                    required
+                    placeholder="知识条目名称"
+                    [ngModel]="formDraft().name"
+                    (ngModelChange)="patchFormField('name', $event)"
+                    name="knowledgeName"
+                  />
+                </div>
+                <div class="entity-form__group entity-form__group--grow">
+                  <label class="entity-form__label" for="create-knowledge-description">描述</label>
+                  <textarea
+                    id="create-knowledge-description"
+                    class="entity-form__textarea"
+                    rows="6"
+                    placeholder="描述业务含义、使用场景、注意事项等"
+                    [ngModel]="formDraft().description"
+                    (ngModelChange)="patchFormField('description', $event)"
+                    name="knowledgeDescription"
+                  ></textarea>
+                </div>
+                <ng-container *ngTemplateOutlet="relationsEditor" />
+              </div>
+              <footer class="entity-form__footer">
+                <button
+                  type="submit"
+                  class="entity-form__btn entity-form__btn--primary"
+                  [disabled]="formSaving()"
+                >
+                  {{ formSaving() ? '创建中…' : '创建' }}
+                </button>
+                <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelForm()">
+                  取消
+                </button>
+              </footer>
+            </form>
+          </article>
+        </div>
+      } @else if (!selected()) {
+        <div class="workbench__detail-empty">
+          <app-empty-state
+            icon="article"
+            title="详情面板"
+            description="选择一条知识查看详情，或新建条目"
+          />
+          <button type="button" class="app-btn app-btn--accent" (click)="startCreate()">
+            <mat-icon>add</mat-icon>
+            新建知识
+          </button>
+        </div>
+      } @else if (detailView() === 'graph') {
+        <div class="workbench__detail-graph">
+          <header class="workbench__detail-graph-header">
+            <button type="button" class="app-btn" (click)="closeGraphView()">
+              <mat-icon>arrow_back</mat-icon>
+              返回
+            </button>
+            <div class="workbench__detail-graph-title">
+              <mat-icon>hub</mat-icon>
+              关系图谱
+            </div>
+          </header>
+          <app-graph-snapshot
+            [snapshot]="graphSnapshot()"
+            [loading]="graphLoading()"
+            [active]="true"
+            [highlightUuid]="graphSnapshot()?.focus_uuid ?? graphFocusUuid()"
+            [depth]="graphDepth()"
+            (depthChange)="onGraphDepthChange($event)"
+          />
+        </div>
+      } @else {
+        <div class="workbench__detail-scroll">
+          <article
+            class="detail-card"
+            [class.detail-card--form]="formMode() === 'edit'"
+          >
+            @if (formMode() === 'edit') {
+              <header class="entity-form__header">
+                <div class="entity-form__header-main">
+                  <span class="detail-card__badge detail-card__badge--knowledge">知识</span>
+                  <h2 class="entity-form__title">编辑知识</h2>
+                  <p class="entity-form__subtitle">修改名称、描述及关联的表与列</p>
+                </div>
+                <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelForm()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              </header>
+              <form class="entity-form" (ngSubmit)="saveForm($event)">
+                <div class="entity-form__body">
+                  <div class="entity-form__group">
+                    <label class="entity-form__label" for="edit-knowledge-name">名称</label>
+                    <input
+                      id="edit-knowledge-name"
+                      class="entity-form__input"
+                      type="text"
+                      required
+                      [ngModel]="formDraft().name"
+                      (ngModelChange)="patchFormField('name', $event)"
+                      name="knowledgeName"
+                    />
+                  </div>
+                  <div class="entity-form__group entity-form__group--grow">
+                    <label class="entity-form__label" for="edit-knowledge-description">描述</label>
+                    <textarea
+                      id="edit-knowledge-description"
+                      class="entity-form__textarea"
+                      rows="6"
+                      [ngModel]="formDraft().description"
+                      (ngModelChange)="patchFormField('description', $event)"
+                      name="knowledgeDescription"
+                    ></textarea>
+                  </div>
+                  <ng-container *ngTemplateOutlet="relationsEditor" />
+                </div>
+                <footer class="entity-form__footer">
+                  <button
+                    type="submit"
+                    class="entity-form__btn entity-form__btn--primary"
+                    [disabled]="formSaving()"
+                  >
+                    {{ formSaving() ? '保存中…' : '保存' }}
+                  </button>
+                  <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelForm()">
+                    取消
+                  </button>
+                </footer>
+              </form>
+            } @else {
+              <header class="detail-card__header">
+                <div class="detail-card__identity">
+                  <span class="detail-card__badge detail-card__badge--knowledge">知识</span>
+                  <h2 class="detail-card__title">{{ selected()!.name }}</h2>
+                </div>
+                <div class="detail-card__toolbar">
+                  <button type="button" class="app-btn" (click)="startEdit()">
+                    <mat-icon>edit</mat-icon>
+                    编辑
+                  </button>
+                  <button type="button" class="app-btn app-btn--danger" (click)="deleteItem()">
+                    <mat-icon>delete_outline</mat-icon>
+                    删除
+                  </button>
+                  <span class="detail-card__toolbar-divider" aria-hidden="true"></span>
+                  <button
+                    type="button"
+                    class="app-btn app-btn--accent"
+                    (click)="openGraphView(selected()!.uuid)"
+                  >
+                    <mat-icon>hub</mat-icon>
+                    关系图谱
+                  </button>
+                </div>
+              </header>
+
+              <dl class="detail-metrics detail-metrics--2">
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">关联表</dt>
+                  <dd class="detail-metrics__value">{{ relationStats().tables }}</dd>
+                </div>
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">关联列</dt>
+                  <dd class="detail-metrics__value">{{ relationStats().columns }}</dd>
+                </div>
+              </dl>
+
+              <section class="detail-card__section">
+                <div class="detail-card__section-head">
+                  <h3 class="detail-card__section-title">关联表与列</h3>
+                </div>
+                @if (relationsLoading()) {
+                  <div class="detail-placeholder detail-placeholder--loading">
+                    <mat-spinner diameter="20" />
+                  </div>
+                } @else if (relations().length === 0) {
+                  <div class="detail-placeholder">暂未关联表或列</div>
+                } @else {
+                  <ul class="knowledge-relations">
+                    @for (relation of relations(); track relation.table_name) {
+                      <li class="knowledge-relation">
+                        <div class="knowledge-relation__table">
+                          <mat-icon>table_chart</mat-icon>
+                          {{ relation.table_name }}
+                        </div>
+                        @if (relation.column_names.length > 0) {
+                          <ul class="knowledge-relation__columns">
+                            @for (column of relation.column_names; track column) {
+                              <li class="app-chip">{{ column }}</li>
+                            }
+                          </ul>
+                        } @else {
+                          <p class="knowledge-relation__hint">整表关联（未指定列）</p>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
+              </section>
+
+              <section class="detail-card__section detail-desc">
+                <div class="detail-desc__head">
+                  <h3 class="detail-card__section-title">描述</h3>
+                </div>
+                @if (hasDescription()) {
+                  <p
+                    class="detail-desc__body"
+                    [class.detail-desc__body--expanded]="descriptionExpanded() || !longDescription()"
+                  >
+                    {{ selected()!.description }}
+                  </p>
+                  @if (longDescription()) {
+                    <button type="button" class="detail-desc__toggle" (click)="toggleDescription()">
+                      {{ descriptionExpanded() ? '收起' : '展开' }}
+                      <mat-icon>{{ descriptionExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                    </button>
+                  }
+                } @else {
+                  <div class="detail-desc__empty">
+                    <p class="detail-desc__empty-text">暂无描述</p>
+                  </div>
+                }
+              </section>
+            }
+          </article>
+        </div>
+      }
+    </section>
+  </div>
+</div>
+
+<ng-template #relationsEditor>
+  <div class="entity-form__group knowledge-relations-form">
+    <div class="knowledge-relations-form__head">
+      <label class="entity-form__label">关联表与列</label>
+      <span class="knowledge-relations-form__meta">
+        {{ relationStats().tables }} 表 · {{ relationStats().columns }} 列
+      </span>
+    </div>
+    <button
+      type="button"
+      class="app-btn app-btn--accent knowledge-relations-form__add"
+      (click)="openRelationDialog()"
+    >
+      <mat-icon>add</mat-icon>
+      添加关联表与列
+    </button>
+    @if (formDraft().relations.length === 0) {
+      <div class="detail-placeholder">点击上方按钮，在弹窗中选择表和列</div>
+    }
+    @for (relation of formDraft().relations; track relation.table_name; let i = $index) {
+      <div class="knowledge-relation-card">
+        <div class="knowledge-relation-card__head">
+          <span class="knowledge-relation-card__table">
+            <mat-icon>table_chart</mat-icon>
+            {{ relation.table_name }}
+          </span>
+          <div class="knowledge-relation-card__actions">
+            <button
+              type="button"
+              class="app-btn app-btn--sm"
+              (click)="openRelationDialog(i)"
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              class="app-btn app-btn--xs app-btn--danger"
+              (click)="removeRelation(i)"
+            >
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+        </div>
+        @if (relation.column_names.length > 0) {
+          <ul class="knowledge-relation-card__column-tags">
+            @for (column of relation.column_names; track column) {
+              <li class="app-chip">{{ column }}</li>
+            }
+          </ul>
+        } @else {
+          <p class="knowledge-relation-card__hint">整表关联（未指定列）</p>
+        }
+      </div>
+    }
+  </div>
+</ng-template>

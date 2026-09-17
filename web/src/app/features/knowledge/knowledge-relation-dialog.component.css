@@ -1,0 +1,289 @@
+.knowledge-relation-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: min(32rem, calc(100vh - 8rem));
+}
+
+.knowledge-relation-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem 1.25rem 0.875rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.knowledge-relation-dialog__title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.knowledge-relation-dialog__subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.knowledge-relation-dialog__close {
+  flex-shrink: 0;
+}
+
+.knowledge-relation-dialog__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 0;
+  flex: 1;
+  min-height: 18rem;
+}
+
+.knowledge-relation-dialog__tables {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid #f1f5f9;
+}
+
+.knowledge-relation-dialog__search {
+  margin: 0.75rem 0.75rem 0.5rem;
+}
+
+.knowledge-relation-dialog__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0.375rem 0.75rem;
+}
+
+.knowledge-relation-dialog__table-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.125rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  border: 0;
+  border-radius: 0.375rem;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.knowledge-relation-dialog__table-item:hover {
+  background: #f8fafc;
+}
+
+.knowledge-relation-dialog__table-item--active {
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
+.knowledge-relation-dialog__table-name {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  color: #0f172a;
+}
+
+.knowledge-relation-dialog__table-comment {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.knowledge-relation-dialog__columns {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0.75rem;
+}
+
+.knowledge-relation-dialog__columns-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.625rem;
+}
+
+.knowledge-relation-dialog__columns-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.knowledge-relation-dialog__columns-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.knowledge-relation-dialog__columns-comment {
+  margin: 0.25rem 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.knowledge-relation-dialog__columns-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.375rem;
+}
+
+.knowledge-relation-dialog__whole-table {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-bottom: 0.625rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  background: #f8fafc;
+  font-size: 0.8125rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.knowledge-relation-dialog__whole-table input {
+  margin: 0;
+  accent-color: #0284c7;
+}
+
+.knowledge-relation-dialog__column-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 -0.25rem;
+  padding: 0 0.25rem;
+}
+
+.knowledge-relation-dialog__col-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.375rem;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.knowledge-relation-dialog__col-item:hover:not(.knowledge-relation-dialog__col-item--disabled) {
+  background: #f8fafc;
+}
+
+.knowledge-relation-dialog__col-item--checked {
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
+.knowledge-relation-dialog__col-item--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.knowledge-relation-dialog__col-input {
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: #0284c7;
+}
+
+.knowledge-relation-dialog__col-body {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.knowledge-relation-dialog__col-name {
+  flex: 0 1 auto;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  color: #0f172a;
+}
+
+.knowledge-relation-dialog__col-comment {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.knowledge-relation-dialog__col-dtype {
+  flex: 0 0 auto;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background: #f1f5f9;
+  font-size: 0.6875rem;
+  color: #64748b;
+  font-family: var(--app-font-mono);
+  white-space: nowrap;
+}
+
+.knowledge-relation-dialog__status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 1.5rem;
+  font-size: 0.8125rem;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.knowledge-relation-dialog__list-footer {
+  padding: 0.5rem 0.625rem 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  text-align: center;
+}
+
+.knowledge-relation-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.875rem 1.25rem 1.25rem;
+  border-top: 1px solid #f1f5f9;
+  background: #fafbfc;
+}
+
+@media (max-width: 640px) {
+  .knowledge-relation-dialog__body {
+    grid-template-columns: 1fr;
+  }
+
+  .knowledge-relation-dialog__tables {
+    border-right: 0;
+    border-bottom: 1px solid #f1f5f9;
+    max-height: 12rem;
+  }
+}

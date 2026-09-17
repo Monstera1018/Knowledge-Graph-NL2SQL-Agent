@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Cpn��">
+  <rect width="32" height="32" rx="8" fill="#f8f9fa" />
+  <path
+    d="M16 7.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm-7 13a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5Zm14 0a2.25 2.25 0 1 1 0 4.5 2.25 2.25 0 0 1 0-4.5Z"
+    fill="url(#brand)"
+  />
+  <path
+    d="M16 12.5v3.2M16 15.7l-5.2 3.1M16 15.7l5.2 3.1"
+    stroke="url(#brand)"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    fill="none"
+  />
+  <defs>
+    <linearGradient id="brand" x1="6" y1="6" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4285f4"  offset="0"/>
+      <stop offset="0.5" stop-color="#9b72f2" />
+      <stop offset="1" stop-color="#d96570" />
+    </linearGradient>
+  </defs>
+</svg>

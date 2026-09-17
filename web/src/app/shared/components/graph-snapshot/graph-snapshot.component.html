@@ -1,0 +1,71 @@
+<div class="graph-snapshot">
+  <div class="graph-snapshot__toolbar">
+    @if (showLegend()) {
+      <div class="graph-snapshot__legend">
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--focus"></span>
+          焦点
+        </span>
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--table"></span>
+          表
+        </span>
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--column"></span>
+          列
+        </span>
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--enum"></span>
+          枚举
+        </span>
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--knowledge"></span>
+          知识
+        </span>
+        <span class="graph-snapshot__legend-item">
+          <span class="graph-snapshot__dot graph-snapshot__dot--sql"></span>
+          SQL
+        </span>
+      </div>
+    }
+
+    <div class="graph-snapshot__controls">
+      @if (showDepthControl()) {
+        <div class="graph-snapshot__depth" role="group" aria-label="子图跳数">
+          @for (hop of depthOptions(); track hop) {
+            <button
+              type="button"
+              class="graph-snapshot__depth-btn"
+              [class.graph-snapshot__depth-btn--active]="depth() === hop"
+              [attr.aria-pressed]="depth() === hop"
+              (click)="onDepthSelect(hop)"
+            >
+              {{ hop }} 跳
+            </button>
+          }
+        </div>
+      }
+
+      <button type="button" class="app-btn graph-snapshot__fit" (click)="refit()">
+        <mat-icon>fit_screen</mat-icon>
+        适应画布
+      </button>
+    </div>
+  </div>
+
+  <div class="graph-snapshot__canvas">
+    @if (loading()) {
+      <div class="graph-snapshot__loading">
+        <mat-spinner diameter="28" />
+      </div>
+    } @else if (!hasGraphData(snapshot())) {
+      <app-empty-state
+        icon="hub"
+        [title]="emptyTitle()"
+        [description]="emptyDescription()"
+      />
+    } @else {
+      <div #graphHost class="graph-snapshot__host" [attr.aria-label]="ariaLabel()"></div>
+    }
+  </div>
+</div>

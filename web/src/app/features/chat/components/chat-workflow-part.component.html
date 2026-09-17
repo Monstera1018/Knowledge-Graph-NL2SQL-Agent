@@ -1,0 +1,86 @@
+<div
+  class="wf"
+  [class.wf--running]="part().status === 'running'"
+  [class.wf--done]="part().status === 'done'"
+  [class.wf--open]="panelOpen()"
+  [class.wf--expandable]="expandable()"
+  (mouseenter)="onHover(true)"
+  (mouseleave)="onHover(false)"
+>
+  <button
+    type="button"
+    class="wf__compact"
+    [attr.aria-expanded]="panelOpen()"
+    (click)="onCompactClick()"
+  >
+    <span class="wf__icon" [class.wf__icon--spin]="part().status === 'running'">
+      @if (part().status === 'done') {
+        <mat-icon>check_circle</mat-icon>
+      } @else if (part().status === 'error') {
+        <mat-icon>error</mat-icon>
+      } @else {
+        <mat-icon>sync</mat-icon>
+      }
+    </span>
+
+    @if (part().status === 'running' && activeStep(); as active) {
+      <span class="wf__label wf__label--live">
+        @if (active.icon) {
+          <span class="wf__emoji">{{ active.icon }}</span>
+        }
+        {{ active.label }}
+      </span>
+      <span class="wf__dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    }
+
+    @if (expandable()) {
+      <mat-icon class="wf__chevron">unfold_more</mat-icon>
+    }
+  </button>
+
+  @if (expandable()) {
+    <div class="wf__panel" role="list">
+      @for (step of steps(); track $index) {
+        <div
+          class="wf__step"
+          role="listitem"
+          [class.wf__step--active]="step.status === 'active'"
+          [class.wf__step--done]="step.status === 'done'"
+        >
+          <span class="wf__dot" aria-hidden="true"></span>
+          <div class="wf__step-body">
+            @if (step.icon) {
+              <span class="wf__emoji" aria-hidden="true">{{ step.icon }}</span>
+            }
+            <span class="wf__step-text">{{ step.label }}</span>
+          </div>
+          @if (step.status === 'active' && !(step.subSteps?.length)) {
+            <span class="wf__mini-spinner" aria-hidden="true"></span>
+          }
+        </div>
+
+        @if (step.subSteps?.length) {
+          @for (sub of step.subSteps!; track $index) {
+            <div
+              class="wf__step wf__step--sub"
+              role="listitem"
+              [class.wf__step--active]="sub.status === 'active'"
+              [class.wf__step--done]="sub.status === 'done'"
+            >
+              <span class="wf__dot" aria-hidden="true"></span>
+              <div class="wf__step-body">
+                @if (sub.icon) {
+                  <span class="wf__emoji" aria-hidden="true">{{ sub.icon }}</span>
+                }
+                <span class="wf__step-text">{{ sub.label }}</span>
+              </div>
+              @if (sub.status === 'active') {
+                <span class="wf__mini-spinner" aria-hidden="true"></span>
+              }
+            </div>
+          }
+        }
+      }
+    </div>
+  }
+</div>

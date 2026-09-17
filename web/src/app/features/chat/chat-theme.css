@@ -1,0 +1,28 @@
+/* 类 ChatGPT 的设计变量，作用域限定在 .chat-page 下 */
+.chat-page {
+  --chat-bg: #ffffff;
+  --chat-surface: #f7f7f8;
+  --chat-border: #e5e5e5;
+  --chat-border-subtle: #ececec;
+  --chat-text: #0d0d0d;
+  --chat-text-secondary: #6e6e80;
+  --chat-text-muted: #8e8ea0;
+  --chat-user-bubble: #f4f4f4;
+  --chat-code-bg: #f7f7f8;
+  --chat-inline-code-bg: #ececf1;
+  --chat-accent: #0d0d0d;
+  --chat-link: #0969da;
+  /** 顶栏、消息区、输入框共用列宽 */
+  --chat-content-max: 54rem;
+  --chat-gutter-x: 0.5rem;
+  --chat-radius-pill: 1.625rem;
+  --chat-radius-block: 0.75rem;
+  --chat-shadow-input: 0 0 0 1px rgb(0 0 0 / 0.06), 0 2px 6px rgb(0 0 0 / 0.04);
+  /** workflow / tool / data 等块标题统一字号 */
+  --chat-part-label-size: 0.8125rem;
+  --chat-part-label-weight: 500;
+  --chat-part-label-line-height: 1.25rem;
+  --chat-part-label-color: #1f1f1f;
+  --chat-part-meta-size: 0.75rem;
+  --chat-part-meta-color: #5f6368;
+}

@@ -1,0 +1,732 @@
+<div class="workbench">
+  <header class="workbench__header">
+    <h1 class="workbench__title">数据目录</h1>
+    <p class="workbench__hint">浏览和维护表、列与枚举值的层级关系</p>
+    <button
+      type="button"
+      class="app-btn workbench__header-action"
+      [disabled]="refreshing()"
+      (click)="refresh()"
+    >
+      <mat-icon [class.is-spinning]="refreshing()">refresh</mat-icon>
+      刷新
+    </button>
+  </header>
+
+  <div class="workbench__body catalog-workbench__body">
+    <!-- 表列表 -->
+    <section class="workbench__pane">
+      <div class="workbench__pane-head">
+        <div class="workbench__pane-toolbar">
+          <label class="app-search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              [ngModel]="tableQuery()"
+              (ngModelChange)="onTableQueryChange($event)"
+              placeholder="搜索表"
+              autocomplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            class="app-btn app-btn--icon"
+            aria-label="新建表"
+            (click)="startCreateTable()"
+          >
+            <mat-icon>add</mat-icon>
+          </button>
+        </div>
+        <div class="workbench__pane-meta">
+          共 {{ tablesTotal() }} 张表
+          @if (tables().length < tablesTotal()) {
+            <span class="workbench__pane-meta-more">（已显示 {{ tables().length }}）</span>
+          }
+        </div>
+      </div>
+
+      <div class="workbench__pane-list">
+        @if (tablesLoading() && tables().length === 0) {
+          <div class="workbench__pane-loading">
+            <mat-spinner diameter="28" />
+          </div>
+        } @else if (tables().length === 0) {
+          <app-empty-state
+            icon="table_chart"
+            title="暂无数据表"
+            description="点击上方 + 新建表，或调整搜索条件"
+          />
+        } @else {
+          @for (table of tables(); track table.uuid) {
+            <button
+              type="button"
+              class="workbench__item"
+              [class.workbench__item--active]="selectedTable()?.uuid === table.uuid"
+              (click)="selectTable(table)"
+            >
+              <div class="workbench__item-name">{{ table.name }}</div>
+              <div class="workbench__item-meta">
+                {{ table.comment || table.description || '无注释' }}
+              </div>
+            </button>
+          }
+        }
+      </div>
+    </section>
+
+    <!-- 列列表 -->
+    <section class="workbench__pane">
+      <div class="workbench__pane-head">
+        <div class="workbench__pane-toolbar">
+          <label class="app-search" [class.app-search--disabled]="!selectedTable()">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              [ngModel]="columnQuery()"
+              (ngModelChange)="onColumnQueryChange($event)"
+              placeholder="搜索列"
+              autocomplete="off"
+              [disabled]="!selectedTable()"
+            />
+          </label>
+          <button
+            type="button"
+            class="app-btn app-btn--icon"
+            aria-label="新建列"
+            [disabled]="!selectedTable()"
+            (click)="startCreateColumn()"
+          >
+            <mat-icon>add</mat-icon>
+          </button>
+        </div>
+        <div class="workbench__pane-meta">
+          @if (selectedTable()) {
+            共 {{ columnsTotal() }} 列
+            @if (columns().length < columnsTotal()) {
+              <span class="workbench__pane-meta-more">（已显示 {{ columns().length }}）</span>
+            }
+          } @else {
+            请先选择一张表
+          }
+        </div>
+      </div>
+
+      <div class="workbench__pane-list">
+        @if (!selectedTable()) {
+          <app-empty-state icon="view_column" title="未选择表" description="从左侧选择一张数据表" />
+        } @else if (columnsLoading() && columns().length === 0) {
+          <div class="workbench__pane-loading">
+            <mat-spinner diameter="28" />
+          </div>
+        } @else if (columns().length === 0) {
+          <app-empty-state
+            icon="view_column"
+            title="暂无列"
+            [description]="columnQuery() ? '搜索无匹配结果' : '点击上方 + 新建列'"
+          />
+        } @else {
+          @for (column of columns(); track column.uuid) {
+            <button
+              type="button"
+              class="workbench__item"
+              [class.workbench__item--active]="selectedColumn()?.uuid === column.uuid"
+              (click)="selectColumn(column)"
+            >
+              <div class="workbench__item-row">
+                <span class="workbench__item-name">{{ column.name }}</span>
+                @if (column.dtype) {
+                  <span class="workbench__item-dtype">{{ column.dtype }}</span>
+                }
+              </div>
+              <div class="workbench__item-meta">{{ column.comment || '无注释' }}</div>
+            </button>
+          }
+        }
+      </div>
+    </section>
+
+    <!-- 详情 -->
+    <section class="workbench__detail">
+      @if (tableFormMode() === 'create') {
+        <div class="workbench__detail-scroll">
+          <article class="detail-card detail-card--form">
+            <header class="entity-form__header">
+              <div class="entity-form__header-main">
+                <span class="detail-card__badge detail-card__badge--table">表</span>
+                <h2 class="entity-form__title">新建表</h2>
+                <p class="entity-form__subtitle">填写表的基础信息与业务描述</p>
+              </div>
+              <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelTableForm()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </header>
+            <form class="entity-form" (ngSubmit)="saveTableForm($event)">
+              <div class="entity-form__body">
+                <ng-container
+                  *ngTemplateOutlet="tableFormFields; context: { idPrefix: 'create', descriptionRows: 6 }"
+                />
+              </div>
+              <footer class="entity-form__footer">
+                <button
+                  type="submit"
+                  class="entity-form__btn entity-form__btn--primary"
+                  [disabled]="tableFormSaving()"
+                >
+                  {{ tableFormSaving() ? '创建中…' : '创建' }}
+                </button>
+                <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelTableForm()">
+                  取消
+                </button>
+              </footer>
+            </form>
+          </article>
+        </div>
+      } @else if (!selectedTable()) {
+        <div class="workbench__detail-empty">
+          <app-empty-state
+            icon="info"
+            title="详情面板"
+            description="选择表或列后查看详情，或新建一张表"
+          />
+          <button type="button" class="app-btn app-btn--accent" (click)="startCreateTable()">
+            <mat-icon>add</mat-icon>
+            新建表
+          </button>
+        </div>
+      } @else if (detailView() === 'graph') {
+        <div class="workbench__detail-graph">
+          <header class="workbench__detail-graph-header">
+            <button type="button" class="app-btn" (click)="closeGraphView()">
+              <mat-icon>arrow_back</mat-icon>
+              返回
+            </button>
+            <div class="workbench__detail-graph-title">
+              <mat-icon>hub</mat-icon>
+              关系图谱
+            </div>
+          </header>
+          <app-graph-snapshot
+            [snapshot]="graphSnapshot()"
+            [loading]="graphLoading()"
+            [active]="true"
+            [highlightUuid]="graphSnapshot()?.focus_uuid ?? graphFocusUuid()"
+            [depth]="graphDepth()"
+            (depthChange)="onGraphDepthChange($event)"
+          />
+        </div>
+      } @else {
+        <div class="workbench__detail-scroll">
+            <article
+              class="detail-card detail-card--table"
+              [class.detail-card--form]="tableFormMode() === 'edit'"
+            >
+            @if (tableFormMode() === 'edit') {
+              <header class="entity-form__header">
+                <div class="entity-form__header-main">
+                  <span class="detail-card__badge detail-card__badge--table">表</span>
+                  <h2 class="entity-form__title">编辑表</h2>
+                  <p class="entity-form__subtitle">修改表名、注释与业务描述</p>
+                </div>
+                <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelTableForm()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              </header>
+              <form class="entity-form" (ngSubmit)="saveTableForm($event)">
+                <div class="entity-form__body">
+                  <ng-container
+                    *ngTemplateOutlet="tableFormFields; context: { idPrefix: 'edit', descriptionRows: 8 }"
+                  />
+                </div>
+                <footer class="entity-form__footer">
+                  <button
+                    type="submit"
+                    class="entity-form__btn entity-form__btn--primary"
+                    [disabled]="tableFormSaving()"
+                  >
+                    {{ tableFormSaving() ? '保存中…' : '保存' }}
+                  </button>
+                  <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelTableForm()">
+                    取消
+                  </button>
+                </footer>
+              </form>
+            } @else {
+              <header class="detail-card__header">
+                <div class="detail-card__identity">
+                  <span class="detail-card__badge detail-card__badge--table">表</span>
+                  <h2 class="detail-card__title detail-card__title--business">
+                    {{ selectedTable()!.comment || '未命名数据表' }}
+                  </h2>
+                  <p
+                    class="detail-card__subtitle detail-card__subtitle--mono"
+                    [appTruncateTooltip]="selectedTable()!.name"
+                  >
+                    {{ selectedTable()!.name }}
+                  </p>
+                </div>
+                <div class="detail-card__toolbar">
+                  <button
+                    type="button"
+                    class="app-btn app-btn--icon"
+                    aria-label="编辑表"
+                    title="编辑"
+                    (click)="startEditTable()"
+                  >
+                    <mat-icon>edit</mat-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="app-btn app-btn--icon app-btn--danger"
+                    aria-label="删除表"
+                    title="删除"
+                    (click)="deleteTable()"
+                  >
+                    <mat-icon>delete_outline</mat-icon>
+                  </button>
+                  <span class="detail-card__toolbar-divider" aria-hidden="true"></span>
+                  <button
+                    type="button"
+                    class="app-btn app-btn--icon app-btn--accent"
+                    aria-label="查看关系图谱"
+                    title="关系图谱"
+                    (click)="openGraphView(selectedTable()!.uuid)"
+                  >
+                    <mat-icon>hub</mat-icon>
+                  </button>
+                </div>
+              </header>
+
+              <dl class="catalog-summary">
+                <div class="catalog-summary__item">
+                  <dt>列</dt>
+                  <dd>{{ overviewStats().columns }}</dd>
+                </div>
+                <div class="catalog-summary__item">
+                  <dt>关联表</dt>
+                  <dd>{{ overviewStats().relatedTables }}</dd>
+                </div>
+                <div class="catalog-summary__item">
+                  <dt>业务知识</dt>
+                  <dd>{{ overviewStats().knowledge }}</dd>
+                </div>
+                <div class="catalog-summary__item">
+                  <dt>引用 SQL</dt>
+                  <dd>{{ overviewStats().sql }}</dd>
+                </div>
+              </dl>
+
+              <nav class="detail-tabs" aria-label="表详情">
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'overview'"
+                  (click)="selectTableDetailTab('overview')"
+                >
+                  概览
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'relations'"
+                  (click)="selectTableDetailTab('relations')"
+                >
+                  关联表
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'knowledge'"
+                  (click)="selectTableDetailTab('knowledge')"
+                >
+                  业务知识
+                </button>
+                <button
+                  type="button"
+                  class="detail-tabs__item"
+                  [class.detail-tabs__item--active]="tableDetailTab() === 'sql'"
+                  (click)="selectTableDetailTab('sql')"
+                >
+                  引用 SQL
+                </button>
+              </nav>
+
+              @if (tableDetailTab() === 'overview') {
+                <section class="detail-card__section detail-desc">
+                  <h3 class="detail-card__section-title">业务描述</h3>
+                  @if (!hasDescription()) {
+                    <div class="detail-desc__empty">
+                      <p class="detail-desc__empty-text">暂无业务描述</p>
+                    </div>
+                  } @else {
+                    <div class="detail-desc__body detail-desc__body--scroll">
+                      {{ selectedTable()!.description }}
+                    </div>
+                  }
+                </section>
+              } @else if (tableDetailTab() === 'relations') {
+                <section class="detail-card__section catalog-joins">
+                  <h3 class="detail-card__section-title">表间关系</h3>
+                  @if (joinRelationsLoading()) {
+                    <div class="detail-placeholder detail-placeholder--loading">
+                      <mat-spinner diameter="22" />
+                    </div>
+                  } @else if (tableJoinRelations().length === 0) {
+                    <div class="detail-placeholder">暂无与其它表的关联，可点击「编辑」维护</div>
+                  } @else {
+                    <ul class="catalog-joins__list">
+                      @for (relation of tableJoinRelations(); track relation.from_table_uuid + relation.to_table_uuid) {
+                        @let meta = joinRelationLabel(selectedTable()!.name, relation);
+                        <li class="catalog-join-card">
+                          <div class="catalog-join-card__head">
+                            <span class="catalog-join-card__role">{{ meta.role }}</span>
+                            <span class="catalog-join-card__arrow" aria-hidden="true">{{ meta.arrow }}</span>
+                            <span class="catalog-join-card__peer">
+                              <mat-icon>table_chart</mat-icon>
+                              <span
+                                class="catalog-join-card__peer-line"
+                                [appTruncateTooltip]="joinRelationPeerTooltip(meta)"
+                              >
+                                <span class="catalog-join-card__peer-name">{{ meta.peer }}</span>
+                                @if (meta.peerComment) {
+                                  <span class="catalog-join-card__peer-comment"> — {{ meta.peerComment }}</span>
+                                }
+                              </span>
+                            </span>
+                          </div>
+                          @if ((relation.condition || '').trim()) {
+                            <pre class="catalog-join-card__condition">{{ relation.condition }}</pre>
+                          } @else {
+                            <p class="catalog-join-card__condition catalog-join-card__condition--empty">
+                              未填写关联条件
+                            </p>
+                          }
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              } @else if (tableDetailTab() === 'knowledge') {
+                <section class="detail-card__section">
+                  <h3 class="detail-card__section-title">关联业务知识</h3>
+                  @if (overviewKnowledgeNodes().length === 0) {
+                    <div class="detail-placeholder">暂无关联业务知识</div>
+                  } @else {
+                    <ul class="catalog-detail-list">
+                      @for (node of overviewKnowledgeNodes(); track node.uuid) {
+                        <li class="catalog-detail-list__item">
+                          <span class="catalog-detail-list__name">{{ node.label }}</span>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              } @else {
+                <section class="detail-card__section">
+                  <h3 class="detail-card__section-title">引用 SQL</h3>
+                  @if (overviewSqlNodes().length === 0) {
+                    <div class="detail-placeholder">暂无引用 SQL</div>
+                  } @else {
+                    <ul class="catalog-detail-list">
+                      @for (node of overviewSqlNodes(); track node.uuid) {
+                        <li class="catalog-detail-list__item">
+                          <span class="catalog-detail-list__name">{{ node.label }}</span>
+                        </li>
+                      }
+                    </ul>
+                  }
+                </section>
+              }
+            }
+          </article>
+
+          @if (columnFormMode() === 'create' || selectedColumn()) {
+            <article
+              class="detail-card detail-card--column"
+              [class.detail-card--form]="columnFormMode() === 'create' || columnFormMode() === 'edit'"
+            >
+              @if (columnFormMode() === 'create' || columnFormMode() === 'edit') {
+                <header class="entity-form__header">
+                  <div class="entity-form__header-main">
+                    <span class="detail-card__badge detail-card__badge--column">列</span>
+                    <h2 class="entity-form__title">
+                      {{ columnFormMode() === 'create' ? '新建列' : '编辑列' }}
+                    </h2>
+                    <p class="entity-form__subtitle">
+                      {{ columnFormMode() === 'create' ? '为当前表添加一列' : '修改列名、类型与注释' }}
+                    </p>
+                  </div>
+                  <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelColumnForm()">
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </header>
+                <form class="entity-form" (ngSubmit)="saveColumnForm($event)">
+                  <div class="entity-form__body">
+                    <div class="entity-form__group">
+                      <label class="entity-form__label" for="column-name">列名</label>
+                      <input
+                        id="column-name"
+                        class="entity-form__input entity-form__input--mono"
+                        type="text"
+                        required
+                        placeholder="例如 user_id"
+                        [ngModel]="columnFormDraft().name"
+                        (ngModelChange)="patchColumnFormField('name', $event)"
+                        name="columnName"
+                      />
+                    </div>
+                    <div class="entity-form__row">
+                      <div class="entity-form__group">
+                        <label class="entity-form__label" for="column-dtype">类型</label>
+                        <input
+                          id="column-dtype"
+                          class="entity-form__input entity-form__input--mono"
+                          type="text"
+                          placeholder="varchar, bigint…"
+                          [ngModel]="columnFormDraft().dtype"
+                          (ngModelChange)="patchColumnFormField('dtype', $event)"
+                          name="columnDtype"
+                        />
+                      </div>
+                      <div class="entity-form__group">
+                        <label class="entity-form__label" for="column-comment">注释</label>
+                        <input
+                          id="column-comment"
+                          class="entity-form__input"
+                          type="text"
+                          placeholder="列的业务含义"
+                          [ngModel]="columnFormDraft().comment"
+                          (ngModelChange)="patchColumnFormField('comment', $event)"
+                          name="columnComment"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <footer class="entity-form__footer">
+                    <button
+                      type="submit"
+                      class="entity-form__btn entity-form__btn--primary"
+                      [disabled]="columnFormSaving()"
+                    >
+                      {{ columnFormSaving() ? '保存中…' : columnFormMode() === 'create' ? '创建' : '保存' }}
+                    </button>
+                    <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelColumnForm()">
+                      取消
+                    </button>
+                  </footer>
+                </form>
+              } @else {
+                <header class="detail-card__header">
+                  <div class="detail-card__identity">
+                    <span class="detail-card__badge detail-card__badge--column">列</span>
+                    <div class="detail-card__title-row">
+                      <h2 class="detail-card__title">{{ selectedColumn()!.name }}</h2>
+                      @if (selectedColumn()!.dtype) {
+                        <span class="detail-card__dtype">{{ selectedColumn()!.dtype }}</span>
+                      }
+                    </div>
+                    @if (selectedColumn()!.comment) {
+                      <p class="detail-card__subtitle">{{ selectedColumn()!.comment }}</p>
+                    }
+                  </div>
+                  <div class="detail-card__toolbar">
+                    <button type="button" class="app-btn" (click)="startEditColumn()">
+                      <mat-icon>edit</mat-icon>
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      class="app-btn app-btn--danger"
+                      (click)="deleteColumn()"
+                    >
+                      <mat-icon>delete_outline</mat-icon>
+                      删除
+                    </button>
+                    <span class="detail-card__toolbar-divider" aria-hidden="true"></span>
+                    <button
+                      type="button"
+                      class="app-btn app-btn--accent"
+                      (click)="openGraphView(selectedColumn()!.uuid)"
+                    >
+                      <mat-icon>hub</mat-icon>
+                      关系图谱
+                    </button>
+                  </div>
+                </header>
+
+                <section class="detail-card__section">
+                  <div class="detail-card__section-head">
+                    <h3 class="detail-card__section-title">
+                      枚举值
+                      @if (!enumsLoading() && enums().length > 0) {
+                        <span class="detail-card__section-count">{{ enums().length }}</span>
+                      }
+                    </h3>
+                    <div class="detail-card__section-tools">
+                      @if (enumsLoading()) {
+                        <mat-spinner diameter="18" />
+                      }
+                      @if (enumFormMode() === 'view') {
+                        <button
+                          type="button"
+                          class="app-btn app-btn--sm app-btn--accent"
+                          (click)="startCreateEnum()"
+                        >
+                          <mat-icon>add</mat-icon>
+                          添加
+                        </button>
+                      }
+                    </div>
+                  </div>
+
+                  @if (enumFormMode() === 'create') {
+                    <form class="enum-form" (ngSubmit)="saveEnumForm($event)">
+                      <input
+                        id="enum-value"
+                        class="entity-form__input"
+                        type="text"
+                        placeholder="输入枚举值"
+                        aria-label="枚举值"
+                        [ngModel]="enumDraft()"
+                        (ngModelChange)="enumDraft.set($event)"
+                        name="enumValue"
+                      />
+                      <div class="enum-form__actions">
+                        <button
+                          type="submit"
+                          class="entity-form__btn entity-form__btn--primary entity-form__btn--sm"
+                          [disabled]="enumFormSaving()"
+                        >
+                          {{ enumFormSaving() ? '保存中…' : '添加' }}
+                        </button>
+                        <button
+                          type="button"
+                          class="entity-form__btn entity-form__btn--ghost entity-form__btn--sm"
+                          (click)="cancelEnumForm()"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </form>
+                  }
+
+                  @if (!enumsLoading() && enums().length === 0 && enumFormMode() !== 'create') {
+                    <div class="detail-placeholder detail-placeholder--roomy">该列暂无枚举值</div>
+                  } @else if (enums().length > 0) {
+                    <ul class="enum-list" aria-label="枚举值">
+                      @for (item of enums(); track item.uuid) {
+                        @if (enumFormMode() === 'edit' && enumEditingUuid() === item.uuid) {
+                          <li class="enum-list__edit">
+                            <input
+                              class="entity-form__input entity-form__input--inline"
+                              type="text"
+                              [ngModel]="enumDraft()"
+                              (ngModelChange)="enumDraft.set($event)"
+                              (keydown.enter)="saveEnumForm()"
+                              name="enumEditValue"
+                            />
+                            <div class="enum-form__actions enum-form__actions--inline">
+                              <button
+                                type="button"
+                                class="app-btn app-btn--xs app-btn--confirm"
+                                aria-label="保存"
+                                [disabled]="enumFormSaving()"
+                                (click)="saveEnumForm()"
+                              >
+                                <mat-icon>check</mat-icon>
+                              </button>
+                              <button
+                                type="button"
+                                class="app-btn app-btn--xs"
+                                aria-label="取消"
+                                (click)="cancelEnumForm()"
+                              >
+                                <mat-icon>close</mat-icon>
+                              </button>
+                            </div>
+                          </li>
+                        } @else {
+                          <li class="enum-tag">
+                            <span class="enum-tag__value">{{ item.value }}</span>
+                            <span class="enum-tag__actions">
+                              <button
+                                type="button"
+                                class="app-btn app-btn--xs"
+                                aria-label="编辑枚举值"
+                                (click)="startEditEnum(item)"
+                              >
+                                <mat-icon>edit</mat-icon>
+                              </button>
+                              <button
+                                type="button"
+                                class="app-btn app-btn--xs app-btn--danger"
+                                aria-label="删除枚举值"
+                                (click)="deleteEnum(item)"
+                              >
+                                <mat-icon>delete_outline</mat-icon>
+                              </button>
+                            </span>
+                          </li>
+                        }
+                      }
+                    </ul>
+                  }
+                </section>
+              }
+            </article>
+          }
+        </div>
+      }
+    </section>
+  </div>
+</div>
+
+<ng-template #tableFormFields let-idPrefix="idPrefix" let-descriptionRows="descriptionRows">
+  <div class="entity-form__group">
+    <label class="entity-form__label" [for]="idPrefix + '-table-name'">表名</label>
+    <input
+      [id]="idPrefix + '-table-name'"
+      class="entity-form__input entity-form__input--mono"
+      type="text"
+      required
+      placeholder="例如 dws_order_detail"
+      [ngModel]="tableFormDraft().name"
+      (ngModelChange)="patchTableFormField('name', $event)"
+      name="tableName"
+    />
+  </div>
+  <div class="entity-form__group">
+    <label class="entity-form__label" [for]="idPrefix + '-table-comment'">注释</label>
+    <input
+      [id]="idPrefix + '-table-comment'"
+      class="entity-form__input"
+      type="text"
+      placeholder="简短说明表的用途"
+      [ngModel]="tableFormDraft().comment"
+      (ngModelChange)="patchTableFormField('comment', $event)"
+      name="tableComment"
+    />
+  </div>
+  <div class="entity-form__group entity-form__group--grow">
+    <label class="entity-form__label" [for]="idPrefix + '-table-description'">业务描述</label>
+    <textarea
+      [id]="idPrefix + '-table-description'"
+      class="entity-form__textarea"
+      [attr.rows]="descriptionRows"
+      placeholder="描述业务含义、使用场景、注意事项等"
+      [ngModel]="tableFormDraft().description"
+      (ngModelChange)="patchTableFormField('description', $event)"
+      name="tableDescription"
+    ></textarea>
+  </div>
+  <app-catalog-join-relations-editor
+    [joinRelations]="tableFormDraft().joinRelations"
+    [tables]="tables()"
+    [draftTableName]="tableFormDraft().name"
+    [selectedTableName]="selectedTable()?.name ?? ''"
+    (addRelation)="addJoinRelation()"
+    (removeRelation)="removeJoinRelation($event)"
+    (patchRelation)="patchJoinRelation($event)"
+  />
+</ng-template>

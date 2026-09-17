@@ -1,0 +1,33 @@
+@if (userMessage(); as user) {
+  <article class="chat-message chat-message--user">
+    <div class="chat-message__bubble">{{ user.content }}</div>
+  </article>
+}
+
+@if (assistantMessage(); as assistant) {
+  <article class="chat-message chat-message--assistant">
+    <div class="chat-message__avatar" aria-hidden="true">
+      <mat-icon>auto_awesome</mat-icon>
+    </div>
+    <div class="chat-message__body">
+      @if (visibleParts().length) {
+        @for (part of visibleParts(); track part.id) {
+          <app-chat-part
+            [part]="part"
+            [streaming]="assistant.status === 'streaming' && part.kind === 'text'"
+          />
+        }
+      } @else if (assistant.status === 'streaming') {
+        <div class="chat-message__thinking">
+          <span class="chat-message__dot"></span>
+          <span class="chat-message__dot"></span>
+          <span class="chat-message__dot"></span>
+        </div>
+      }
+
+      @if (assistant.error) {
+        <p class="chat-message__error">{{ assistant.error }}</p>
+      }
+    </div>
+  </article>
+}

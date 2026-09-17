@@ -1,0 +1,76 @@
+/* 操作提示（自定义 Toast 容器） */
+.mat-mdc-snack-bar-container.app-snack-host {
+  width: auto;
+  margin-top: calc(env(safe-area-inset-top, 0px) + 0.75rem);
+  margin-bottom: 0;
+}
+
+.mat-mdc-snack-bar-container.app-snack-host .mdc-snackbar__surface {
+  width: auto;
+  min-width: unset;
+  max-width: unset;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mat-mdc-snack-bar-container.app-snack-host .mat-mdc-snack-bar-label {
+  width: auto;
+  padding: 0;
+}
+
+/* 确认弹框 */
+.cdk-overlay-dark-backdrop.app-dialog-backdrop {
+  background: rgb(15 23 42 / 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.app-confirm-dialog-panel .mat-mdc-dialog-container {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow:
+    0 4px 6px rgb(15 23 42 / 0.04),
+    0 20px 48px rgb(15 23 42 / 0.12);
+}
+
+.app-confirm-dialog-panel .mat-mdc-dialog-surface {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.app-confirm-dialog-panel.app-confirm-dialog-panel--danger .mat-mdc-dialog-container {
+  border-color: #fecaca;
+}
+
+/* 知识关联表/列选择 */
+.app-knowledge-relation-dialog-panel .mat-mdc-dialog-container {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow:
+    0 4px 6px rgb(15 23 42 / 0.04),
+    0 20px 48px rgb(15 23 42 / 0.12);
+}
+
+.app-knowledge-relation-dialog-panel .mat-mdc-dialog-surface {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.app-sql-result-dialog-panel .mat-mdc-dialog-container {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow:
+    0 4px 6px rgb(15 23 42 / 0.04),
+    0 20px 48px rgb(15 23 42 / 0.12);
+}
+
+.app-sql-result-dialog-panel .mat-mdc-dialog-surface {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}

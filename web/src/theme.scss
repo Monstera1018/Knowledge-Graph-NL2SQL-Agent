@@ -1,0 +1,44 @@
+@use '@angular/material' as mat;
+
+html {
+  //noinspection SassScssUnresolvedMixin
+  @include mat.theme(
+    mat.define-theme(
+      (
+        color: (
+          theme-type: light,
+          primary: mat.$azure-palette,
+          tertiary: mat.$blue-palette,
+        ),
+        typography: (
+          brand-family: '"Noto Sans SC Variable", "Noto Sans SC", sans-serif',
+          plain-family: '"Noto Sans SC Variable", "Noto Sans SC", sans-serif',
+        ),
+        density: (
+          scale: 0,
+        ),
+      )
+    )
+  );
+}
+
+/* 全局 Tooltip 皮肤：matTooltipClass="app-tooltip" 或 appTruncateTooltip 指令 */
+.app-tooltip {
+  @include mat.tooltip-overrides(
+    (
+      container-color: #0f0f0f,
+      container-shape: 9999px,
+      supporting-text-color: #fff,
+      supporting-text-size: 0.8125rem,
+      supporting-text-line-height: 1.125rem,
+      supporting-text-weight: 400,
+      supporting-text-tracking: 0.00625rem,
+    )
+  );
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}

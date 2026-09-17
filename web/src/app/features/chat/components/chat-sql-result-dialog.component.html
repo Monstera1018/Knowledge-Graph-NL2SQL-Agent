@@ -1,0 +1,47 @@
+<div class="sql-result-dialog" role="dialog" aria-labelledby="sql-result-dialog-title">
+  <header class="sql-result-dialog__header">
+    <div>
+      <h2 class="sql-result-dialog__title" id="sql-result-dialog-title">查询结果</h2>
+      <p class="sql-result-dialog__subtitle">{{ subtitle() }}</p>
+    </div>
+    <button
+      type="button"
+      class="app-btn app-btn--icon sql-result-dialog__close"
+      (click)="close()"
+      aria-label="关闭"
+    >
+      <mat-icon>close</mat-icon>
+    </button>
+  </header>
+
+  <div class="sql-result-dialog__body">
+    @if (!data.columns.length && !data.rows.length) {
+      <p class="sql-result-dialog__empty">没有可展示的数据行。</p>
+    } @else {
+      <table class="sql-result-dialog__table">
+        <thead>
+          <tr>
+            @for (col of data.columns; track col) {
+              <th>{{ col }}</th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @if (!data.rows.length) {
+            <tr>
+              <td [attr.colspan]="data.columns.length || 1">（无数据）</td>
+            </tr>
+          } @else {
+            @for (row of data.rows; track $index) {
+              <tr>
+                @for (col of data.columns; track col) {
+                  <td>{{ row[col] || '' }}</td>
+                }
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    }
+  </div>
+</div>

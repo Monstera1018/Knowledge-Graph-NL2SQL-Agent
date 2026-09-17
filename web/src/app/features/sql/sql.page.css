@@ -1,0 +1,154 @@
+:host {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-card__header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.detail-card__identity {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.detail-card__title-row {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.detail-card__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-card__toolbar {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.detail-card__badge--sql {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.entity-form__textarea--code {
+  min-height: 14rem;
+  font-family: var(--app-font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.sql-relations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sql-relation {
+  padding: 0.75rem 0.875rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #fafbfc;
+}
+
+.sql-relation__table {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.sql-relation__table mat-icon {
+  width: 1rem !important;
+  height: 1rem !important;
+  font-size: 1rem !important;
+  color: #64748b;
+}
+
+.sql-relation__columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sql-relation__hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.sql-content-section {
+  margin-top: 0.25rem;
+}
+
+.sql-item-flags {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.sql-item-enable {
+  margin-top: 0.375rem;
+}
+
+.sql-source-badge {
+  flex-shrink: 0;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background: #f1f5f9;
+  font-size: 0.625rem;
+  line-height: 1rem;
+  color: #475569;
+}
+
+.sql-source-badge--llm {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.sql-pane-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.sql-pane-filters__select {
+  min-width: 0;
+  height: 1.75rem;
+  padding: 0 0.375rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  background: #fff;
+  font: inherit;
+  font-size: 0.6875rem;
+  color: #475569;
+}
+
+.sql-pane-filters__select:focus {
+  outline: none;
+  border-color: #93c5fd;
+}
+
+.sql-item-time {
+  margin-top: 0.125rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: #94a3b8;
+}

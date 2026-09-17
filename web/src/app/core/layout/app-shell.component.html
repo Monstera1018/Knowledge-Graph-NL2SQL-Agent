@@ -1,0 +1,145 @@
+<div class="shell" [class.collapsed]="collapsed()" [class.animating]="animating()">
+  <aside class="sidebar">
+    <div class="sidenav-inner">
+      <header class="sidenav-header">
+        <div class="icon-slot header-icon-slot">
+          <a class="brand-icon-link header-brand" routerLink="/chat" aria-label="首页">
+            <mat-icon class="brand-icon">auto_awesome</mat-icon>
+          </a>
+          <button
+            type="button"
+            class="toggle-btn rail-toggle"
+            (click)="toggleSidebar()"
+            aria-label="打开边栏"
+            matTooltip="打开边栏"
+            matTooltipPosition="right"
+            matTooltipClass="app-tooltip"
+            matTooltipShowDelay="400"
+            [matTooltipDisabled]="!collapsed() || animating()"
+          >
+            <mat-icon>left_panel_open</mat-icon>
+          </button>
+        </div>
+
+        <div class="header-actions">
+          <button
+            type="button"
+            class="toggle-btn header-toggle"
+            (click)="toggleSidebar()"
+            aria-label="收起边栏"
+            matTooltip="收起边栏"
+            matTooltipPosition="right"
+            matTooltipClass="app-tooltip"
+            matTooltipShowDelay="400"
+            [matTooltipDisabled]="collapsed() || animating()"
+          >
+            <mat-icon>left_panel_close</mat-icon>
+          </button>
+        </div>
+      </header>
+
+      <nav class="sidenav-nav" aria-label="主导航">
+        @for (item of navItems; track item.path) {
+          <a
+            class="nav-item"
+            [routerLink]="item.path"
+            routerLinkActive="active"
+            [attr.aria-label]="item.label"
+          >
+            <span
+              class="icon-slot"
+              [matTooltip]="item.label"
+              matTooltipPosition="right"
+              matTooltipClass="app-tooltip"
+              matTooltipShowDelay="400"
+              [matTooltipDisabled]="!collapsed() || animating()"
+            >
+              <mat-icon class="nav-icon">{{ item.icon }}</mat-icon>
+            </span>
+            <span class="nav-label">{{ item.label }}</span>
+          </a>
+        }
+      </nav>
+
+      <footer class="sidenav-footer">
+        <div class="icon-slot footer-rail">
+          <div class="footer-rail__actions">
+            <button
+              type="button"
+              class="footer-btn footer-btn--avatar"
+              [attr.aria-label]="displayName()"
+              [matTooltip]="displayName()"
+              matTooltipPosition="right"
+              matTooltipClass="app-tooltip"
+              matTooltipShowDelay="400"
+              [matTooltipDisabled]="!collapsed() || animating()"
+              (click)="toggleSidebar()"
+            >
+              <span class="footer-btn__initial" aria-hidden="true">{{ userInitial() }}</span>
+            </button>
+            <button
+              type="button"
+              class="footer-btn"
+              aria-label="退出登录"
+              matTooltip="退出登录"
+              matTooltipPosition="right"
+              matTooltipClass="app-tooltip"
+              matTooltipShowDelay="400"
+              [matTooltipDisabled]="!collapsed() || animating()"
+              (click)="logout()"
+            >
+              <mat-icon>logout</mat-icon>
+            </button>
+          </div>
+        </div>
+
+        <div class="footer-menu">
+          <div class="footer-menu__user">
+            <span class="footer-menu__name" [title]="displayName()">{{ displayName() }}</span>
+            <span class="footer-menu__username">@{{ username() }}</span>
+          </div>
+
+          @if (canSwitchWorkspace()) {
+            <div class="footer-menu__group" role="radiogroup" aria-label="工作区">
+              @for (ws of workspaceIds(); track ws) {
+                <button
+                  type="button"
+                  class="nav-item footer-nav-btn"
+                  role="radio"
+                  [attr.aria-checked]="currentWorkspaceId() === ws"
+                  [class.active]="currentWorkspaceId() === ws"
+                  (click)="selectWorkspace(ws)"
+                >
+                  <span class="icon-slot">
+                    <mat-icon class="nav-icon">
+                      {{ currentWorkspaceId() === ws ? 'radio_button_checked' : 'radio_button_unchecked' }}
+                    </mat-icon>
+                  </span>
+                  <span class="nav-label">{{ ws }}</span>
+                </button>
+              }
+            </div>
+          }
+
+          <button type="button" class="nav-item footer-nav-btn" (click)="logout()">
+            <span class="icon-slot">
+              <mat-icon class="nav-icon">logout</mat-icon>
+            </span>
+            <span class="nav-label">退出登录</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+  </aside>
+
+  <main class="shell-main">
+    <div
+      class="route-host"
+      [class.route-host--flush]="pageState(outlet) === 'chat'"
+      [@.disabled]="reduceMotion()"
+      [@pageTransition]="pageState(outlet)"
+    >
+      <router-outlet #outlet="outlet" />
+    </div>
+  </main>
+</div>

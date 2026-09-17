@@ -1,0 +1,55 @@
+.app-confirm {
+  padding: 1.375rem 1.375rem 1.25rem;
+}
+
+.app-confirm__title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+  color: #0f172a;
+}
+
+.app-confirm--danger .app-confirm__title {
+  color: #991b1b;
+}
+
+.app-confirm__message {
+  margin: 0.625rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  color: #64748b;
+  word-break: break-word;
+}
+
+.app-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+.app-confirm__submit {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+.app-confirm__submit:hover:not(:disabled) {
+  background: #1e293b;
+  border-color: #1e293b;
+  color: #fff;
+}
+
+.app-confirm__submit--danger {
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.app-confirm__submit--danger:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #fff;
+}

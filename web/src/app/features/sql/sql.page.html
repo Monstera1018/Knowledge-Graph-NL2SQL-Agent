@@ -1,0 +1,462 @@
+<div class="workbench">
+  <header class="workbench__header">
+    <h1 class="workbench__title">SQL</h1>
+    <p class="workbench__hint">浏览和维护历史 SQL。LLM 生成样例默认停用，启用后才参与问数生成。</p>
+    <button
+      type="button"
+      class="app-btn workbench__header-action"
+      [disabled]="refreshing()"
+      (click)="refresh()"
+    >
+      <mat-icon [class.is-spinning]="refreshing()">refresh</mat-icon>
+      刷新
+    </button>
+  </header>
+
+  <div class="workbench__body workbench__body--2col">
+    <section class="workbench__pane">
+      <div class="workbench__pane-head">
+        <div class="workbench__pane-toolbar">
+          <label class="app-search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              [ngModel]="query()"
+              (ngModelChange)="onQueryChange($event)"
+              placeholder="搜索名称、逻辑或方言"
+              autocomplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            class="app-btn app-btn--icon"
+            aria-label="新建 SQL"
+            (click)="startCreate()"
+          >
+            <mat-icon>add</mat-icon>
+          </button>
+        </div>
+        <div class="sql-pane-filters">
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="sourceFilter()"
+            (ngModelChange)="onSourceFilterChange($event)"
+            aria-label="按来源筛选"
+          >
+            <option value="">全部来源</option>
+            <option value="import">人工导入</option>
+            <option value="llm">LLM生成</option>
+          </select>
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="enabledFilter()"
+            (ngModelChange)="onEnabledFilterChange($event)"
+            aria-label="按启用状态筛选"
+          >
+            <option value="">全部状态</option>
+            <option value="true">启用</option>
+            <option value="false">停用</option>
+          </select>
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="sort()"
+            (ngModelChange)="onSortChange($event)"
+            aria-label="排序方式"
+          >
+            <option value="time_desc">最近更新</option>
+            <option value="time_asc">最早更新</option>
+            <option value="name">按名称</option>
+          </select>
+        </div>
+        <div class="workbench__pane-meta">
+          共 {{ total() }} 条
+          @if (items().length < total()) {
+            <span class="workbench__pane-meta-more">（已显示 {{ items().length }}）</span>
+          }
+        </div>
+      </div>
+
+      <div class="workbench__pane-list">
+        @if (loading() && items().length === 0) {
+          <div class="workbench__pane-loading">
+            <mat-spinner diameter="28" />
+          </div>
+        } @else if (items().length === 0) {
+          <app-empty-state
+            icon="code"
+            title="暂无 SQL"
+            [description]="query() || sourceFilter() || enabledFilter() ? '没有符合筛选条件的 SQL' : '点击上方 + 新建 SQL'"
+          />
+        } @else {
+          @for (item of items(); track item.uuid) {
+            <div
+              class="workbench__item"
+              [class.workbench__item--active]="selected()?.uuid === item.uuid"
+              (click)="selectItem(item)"
+              (keydown.enter)="selectItem(item)"
+              tabindex="0"
+              role="button"
+            >
+              <div class="workbench__item-row">
+                <span class="workbench__item-name" [appTruncateTooltip]="item.name">{{
+                  item.name
+                }}</span>
+                <span class="sql-item-flags">
+                  <span
+                    class="sql-source-badge"
+                    [class.sql-source-badge--llm]="item.source === 'llm'"
+                  >{{ sourceLabel(item) }}</span>
+                  @if (item.dialect) {
+                    <span class="workbench__item-dtype">{{ item.dialect }}</span>
+                  }
+                </span>
+              </div>
+              <div class="workbench__item-meta">{{ item.logic || '无逻辑说明' }}</div>
+              @if (timeLabel(item)) {
+                <div class="sql-item-time">{{ timeLabel(item) }}</div>
+              }
+              <div class="sql-item-enable">
+                <button
+                  type="button"
+                  class="app-btn app-btn--sm"
+                  [disabled]="togglingUuid() === item.uuid"
+                  (click)="toggleEnabled($event, item)"
+                >
+                  <mat-icon>{{ isEnabled(item) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                  {{ isEnabled(item) ? '启用' : '停用' }}
+                </button>
+              </div>
+            </div>
+          }
+        }
+      </div>
+    </section>
+
+    <section class="workbench__detail">
+      @if (formMode() === 'create') {
+        <div class="workbench__detail-scroll">
+          <article class="detail-card detail-card--form">
+            <header class="entity-form__header">
+              <div class="entity-form__header-main">
+                <span class="detail-card__badge detail-card__badge--sql">SQL</span>
+                <h2 class="entity-form__title">新建 SQL</h2>
+                <p class="entity-form__subtitle">填写名称、方言、逻辑说明与 SQL 内容</p>
+              </div>
+              <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelForm()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </header>
+            <form class="entity-form" (ngSubmit)="saveForm($event)">
+              <div class="entity-form__body">
+                <div class="entity-form__row">
+                  <div class="entity-form__group">
+                    <label class="entity-form__label" for="create-sql-name">名称</label>
+                    <input
+                      id="create-sql-name"
+                      class="entity-form__input"
+                      type="text"
+                      required
+                      placeholder="SQL 名称"
+                      [ngModel]="formDraft().name"
+                      (ngModelChange)="patchFormField('name', $event)"
+                      name="sqlName"
+                    />
+                  </div>
+                  <div class="entity-form__group">
+                    <label class="entity-form__label" for="create-sql-dialect">方言</label>
+                    <input
+                      id="create-sql-dialect"
+                      class="entity-form__input entity-form__input--mono"
+                      type="text"
+                      placeholder="如 hive、spark"
+                      [ngModel]="formDraft().dialect"
+                      (ngModelChange)="patchFormField('dialect', $event)"
+                      name="sqlDialect"
+                    />
+                  </div>
+                </div>
+                <div class="entity-form__group">
+                  <label class="entity-form__label" for="create-sql-logic">逻辑说明</label>
+                  <textarea
+                    id="create-sql-logic"
+                    class="entity-form__textarea"
+                    rows="4"
+                    placeholder="描述查询目的、口径与注意事项"
+                    [ngModel]="formDraft().logic"
+                    (ngModelChange)="patchFormField('logic', $event)"
+                    name="sqlLogic"
+                  ></textarea>
+                </div>
+                <div class="entity-form__group entity-form__group--grow">
+                  <label class="entity-form__label" for="create-sql-content">SQL 内容</label>
+                  <textarea
+                    id="create-sql-content"
+                    class="entity-form__textarea entity-form__textarea--code"
+                    rows="12"
+                    placeholder="SELECT ..."
+                    [ngModel]="formDraft().content"
+                    (ngModelChange)="patchFormField('content', $event)"
+                    name="sqlContent"
+                  ></textarea>
+                </div>
+              </div>
+              <footer class="entity-form__footer">
+                <button
+                  type="submit"
+                  class="entity-form__btn entity-form__btn--primary"
+                  [disabled]="formSaving()"
+                >
+                  {{ formSaving() ? '创建中…' : '创建' }}
+                </button>
+                <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelForm()">
+                  取消
+                </button>
+              </footer>
+            </form>
+          </article>
+        </div>
+      } @else if (!selected()) {
+        <div class="workbench__detail-empty">
+          <app-empty-state
+            icon="terminal"
+            title="详情面板"
+            description="选择一条 SQL 查看详情，或新建条目"
+          />
+          <button type="button" class="app-btn app-btn--accent" (click)="startCreate()">
+            <mat-icon>add</mat-icon>
+            新建 SQL
+          </button>
+        </div>
+      } @else if (detailView() === 'graph') {
+        <div class="workbench__detail-graph">
+          <header class="workbench__detail-graph-header">
+            <button type="button" class="app-btn" (click)="closeGraphView()">
+              <mat-icon>arrow_back</mat-icon>
+              返回
+            </button>
+            <div class="workbench__detail-graph-title">
+              <mat-icon>hub</mat-icon>
+              关系图谱
+            </div>
+          </header>
+          <app-graph-snapshot
+            [snapshot]="graphSnapshot()"
+            [loading]="graphLoading()"
+            [active]="true"
+            [highlightUuid]="graphSnapshot()?.focus_uuid ?? graphFocusUuid()"
+            [depth]="graphDepth()"
+            (depthChange)="onGraphDepthChange($event)"
+          />
+        </div>
+      } @else {
+        <div class="workbench__detail-scroll">
+          <article class="detail-card" [class.detail-card--form]="formMode() === 'edit'">
+            @if (formMode() === 'edit') {
+              <header class="entity-form__header">
+                <div class="entity-form__header-main">
+                  <span class="detail-card__badge detail-card__badge--sql">SQL</span>
+                  <h2 class="entity-form__title">编辑 SQL</h2>
+                  <p class="entity-form__subtitle">修改名称、方言、逻辑说明与 SQL 内容</p>
+                </div>
+                <button type="button" class="app-btn app-btn--icon" aria-label="关闭" (click)="cancelForm()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              </header>
+              <form class="entity-form" (ngSubmit)="saveForm($event)">
+                <div class="entity-form__body">
+                  <div class="entity-form__row">
+                    <div class="entity-form__group">
+                      <label class="entity-form__label" for="edit-sql-name">名称</label>
+                      <input
+                        id="edit-sql-name"
+                        class="entity-form__input"
+                        type="text"
+                        required
+                        [ngModel]="formDraft().name"
+                        (ngModelChange)="patchFormField('name', $event)"
+                        name="sqlName"
+                      />
+                    </div>
+                    <div class="entity-form__group">
+                      <label class="entity-form__label" for="edit-sql-dialect">方言</label>
+                      <input
+                        id="edit-sql-dialect"
+                        class="entity-form__input entity-form__input--mono"
+                        type="text"
+                        [ngModel]="formDraft().dialect"
+                        (ngModelChange)="patchFormField('dialect', $event)"
+                        name="sqlDialect"
+                      />
+                    </div>
+                  </div>
+                  <div class="entity-form__group">
+                    <label class="entity-form__label" for="edit-sql-logic">逻辑说明</label>
+                    <textarea
+                      id="edit-sql-logic"
+                      class="entity-form__textarea"
+                      rows="4"
+                      [ngModel]="formDraft().logic"
+                      (ngModelChange)="patchFormField('logic', $event)"
+                      name="sqlLogic"
+                    ></textarea>
+                  </div>
+                  <div class="entity-form__group entity-form__group--grow">
+                    <label class="entity-form__label" for="edit-sql-content">SQL 内容</label>
+                    <textarea
+                      id="edit-sql-content"
+                      class="entity-form__textarea entity-form__textarea--code"
+                      rows="12"
+                      [ngModel]="formDraft().content"
+                      (ngModelChange)="patchFormField('content', $event)"
+                      name="sqlContent"
+                    ></textarea>
+                  </div>
+                </div>
+                <footer class="entity-form__footer">
+                  <button
+                    type="submit"
+                    class="entity-form__btn entity-form__btn--primary"
+                    [disabled]="formSaving()"
+                  >
+                    {{ formSaving() ? '保存中…' : '保存' }}
+                  </button>
+                  <button type="button" class="entity-form__btn entity-form__btn--ghost" (click)="cancelForm()">
+                    取消
+                  </button>
+                </footer>
+              </form>
+            } @else {
+              <header class="detail-card__header">
+                <div class="detail-card__identity">
+                  <span class="detail-card__badge detail-card__badge--sql">SQL</span>
+                  <div class="detail-card__title-row">
+                    <h2 class="detail-card__title" [appTruncateTooltip]="selected()!.name">
+                      {{ selected()!.name }}
+                    </h2>
+                    <span
+                      class="sql-source-badge"
+                      [class.sql-source-badge--llm]="selected()!.source === 'llm'"
+                    >{{ sourceLabel(selected()) }}</span>
+                    @if (selected()!.dialect) {
+                      <span class="detail-card__dtype">{{ selected()!.dialect }}</span>
+                    }
+                  </div>
+                </div>
+                <div class="detail-card__toolbar">
+                  <button
+                    type="button"
+                    class="app-btn"
+                    [disabled]="togglingUuid() === selected()!.uuid"
+                    (click)="toggleEnabled($event, selected()!)"
+                  >
+                    <mat-icon>{{ isEnabled(selected()) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                    {{ isEnabled(selected()) ? '启用' : '停用' }}
+                  </button>
+                  <button type="button" class="app-btn" (click)="startEdit()">
+                    <mat-icon>edit</mat-icon>
+                    编辑
+                  </button>
+                  <button type="button" class="app-btn app-btn--danger" (click)="deleteItem()">
+                    <mat-icon>delete_outline</mat-icon>
+                    删除
+                  </button>
+                  <span class="detail-card__toolbar-divider" aria-hidden="true"></span>
+                  <button
+                    type="button"
+                    class="app-btn app-btn--accent"
+                    (click)="openGraphView(selected()!.uuid)"
+                  >
+                    <mat-icon>hub</mat-icon>
+                    关系图谱
+                  </button>
+                </div>
+              </header>
+
+              <dl class="detail-metrics detail-metrics--2">
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">关联表</dt>
+                  <dd class="detail-metrics__value">{{ relationStats().tables }}</dd>
+                </div>
+                <div class="detail-metrics__item">
+                  <dt class="detail-metrics__label">关联列</dt>
+                  <dd class="detail-metrics__value">{{ relationStats().columns }}</dd>
+                </div>
+              </dl>
+
+              <section class="detail-card__section">
+                <div class="detail-card__section-head">
+                  <h3 class="detail-card__section-title">关联表与列</h3>
+                </div>
+                @if (relationsLoading()) {
+                  <div class="detail-placeholder detail-placeholder--loading">
+                    <mat-spinner diameter="20" />
+                  </div>
+                } @else if (relations().length === 0) {
+                  <div class="detail-placeholder">暂未关联表或列（保存含 SQL 内容后将自动解析）</div>
+                } @else {
+                  <ul class="sql-relations">
+                    @for (relation of relations(); track relation.table_name) {
+                      <li class="sql-relation">
+                        <div class="sql-relation__table">
+                          <mat-icon>table_chart</mat-icon>
+                          {{ relation.table_name }}
+                        </div>
+                        @if (relation.column_names.length > 0) {
+                          <ul class="sql-relation__columns">
+                            @for (column of relation.column_names; track column) {
+                              <li class="app-chip">{{ column }}</li>
+                            }
+                          </ul>
+                        } @else {
+                          <p class="sql-relation__hint">整表关联（未指定列）</p>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
+              </section>
+
+              <section class="detail-card__section detail-desc">
+                <div class="detail-desc__head">
+                  <h3 class="detail-card__section-title">逻辑说明</h3>
+                </div>
+                @if (hasLogic()) {
+                  <p
+                    class="detail-desc__body"
+                    [class.detail-desc__body--expanded]="logicExpanded() || !longLogic()"
+                  >
+                    {{ selected()!.logic }}
+                  </p>
+                  @if (longLogic()) {
+                    <button type="button" class="detail-desc__toggle" (click)="toggleLogic()">
+                      {{ logicExpanded() ? '收起' : '展开' }}
+                      <mat-icon>{{ logicExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                    </button>
+                  }
+                } @else {
+                  <div class="detail-desc__empty">
+                    <p class="detail-desc__empty-text">暂无逻辑说明</p>
+                  </div>
+                }
+              </section>
+
+              <section class="detail-card__section sql-content-section">
+                <div class="detail-card__section-head">
+                  <h3 class="detail-card__section-title">SQL 内容</h3>
+                </div>
+                @if (hasContent()) {
+                  <app-sql-highlight [code]="selected()!.content" />
+                } @else {
+                  <div class="detail-desc__empty">
+                    <p class="detail-desc__empty-text">暂无 SQL 内容</p>
+                  </div>
+                }
+              </section>
+            }
+          </article>
+        </div>
+      }
+    </section>
+  </div>
+</div>

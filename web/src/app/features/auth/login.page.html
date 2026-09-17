@@ -1,0 +1,46 @@
+<div class="login-page">
+  <section class="login-card">
+    <header class="login-card__header">
+      <mat-icon class="login-card__icon">auto_awesome</mat-icon>
+      <h1 class="login-card__title">自然语言问数助手</h1>
+    </header>
+
+    <form class="login-form" (ngSubmit)="submit()">
+      <label class="login-field">
+        <span>用户名</span>
+        <input
+          type="text"
+          autocomplete="username"
+          [ngModel]="username()"
+          (ngModelChange)="username.set($event)"
+          name="username"
+          required
+        />
+      </label>
+
+      <label class="login-field">
+        <span>密码</span>
+        <input
+          type="password"
+          autocomplete="current-password"
+          [ngModel]="password()"
+          (ngModelChange)="password.set($event)"
+          name="password"
+          required
+        />
+      </label>
+
+      @if (error()) {
+        <p class="login-error" role="alert">{{ error() }}</p>
+      }
+
+      <button type="submit" class="app-btn app-btn--primary login-submit" [disabled]="submitting()">
+        @if (submitting()) {
+          <mat-spinner diameter="18" />
+        } @else {
+          登录
+        }
+      </button>
+    </form>
+  </section>
+</div>

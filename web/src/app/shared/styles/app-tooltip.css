@@ -1,0 +1,37 @@
+/*
+ * 全局 Material Tooltip 皮肤（matTooltipClass="app-tooltip"）
+ * - 默认：短文案、侧栏等
+ * - --truncate：配合 appTruncateTooltip，单行展示被省略的全文
+ */
+
+/* 右侧弹出时左侧小三角 */
+.cdk-overlay-pane.mat-mdc-tooltip-panel-right .app-tooltip.mat-mdc-tooltip {
+  position: relative;
+}
+
+.cdk-overlay-pane.mat-mdc-tooltip-panel-right .app-tooltip.mat-mdc-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -0.3125rem;
+  width: 0;
+  height: 0;
+  border-top: 0.3125rem solid transparent;
+  border-bottom: 0.3125rem solid transparent;
+  border-right: 0.3125rem solid #0f0f0f;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.app-tooltip .mat-mdc-tooltip-surface {
+  max-width: 16rem;
+  box-shadow: none;
+}
+
+.app-tooltip--truncate .mat-mdc-tooltip-surface {
+  width: max-content;
+  max-width: min(36rem, calc(100vw - 3rem));
+  white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
+}

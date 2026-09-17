@@ -1,0 +1,100 @@
+@if (steps().length === 0) {
+  @if (streaming()) {
+    <div class="trace-empty">
+      <span class="trace-empty__pulse"></span>
+      <p>正在收集执行步骤…</p>
+    </div>
+  } @else {
+    <p class="trace-empty">暂无追踪内容</p>
+  }
+} @else {
+  <ol class="trace-timeline">
+    @for (step of steps(); track step.id; let index = $index; let last = $last) {
+      <li
+        class="trace-step"
+        [class.trace-step--expanded]="isExpanded(step)"
+        [class.trace-step--active]="stepStatus(step, index) === 'active'"
+        [class.trace-step--sql]="step.emphasis === 'sql'"
+        [class.trace-step--check]="step.emphasis === 'check'"
+        [class.trace-step--error]="step.emphasis === 'error' || stepStatus(step, index) === 'error'"
+      >
+        <div class="trace-step__rail" aria-hidden="true">
+          <span class="trace-step__dot"></span>
+          @if (!last) {
+            <span class="trace-step__line"></span>
+          }
+        </div>
+
+        <div class="trace-step__card">
+          <button
+            type="button"
+            class="trace-step__head"
+            (click)="toggleStep(step)"
+            [attr.aria-expanded]="isExpanded(step)"
+          >
+            <span class="trace-step__emoji" aria-hidden="true">{{ step.emoji }}</span>
+            <span class="trace-step__titles">
+              <span class="trace-step__label">{{ step.label }}</span>
+              @if (!isExpanded(step) && step.summary) {
+                <span class="trace-step__summary">{{ step.summary }}</span>
+              }
+            </span>
+            @if (stepStatus(step, index) === 'active') {
+              <span class="trace-step__badge">进行中</span>
+            } @else if (stepStatus(step, index) === 'error') {
+              <span class="trace-step__badge trace-step__badge--error">未完成</span>
+            }
+            <mat-icon class="trace-step__chevron">
+              {{ isExpanded(step) ? 'expand_less' : 'expand_more' }}
+            </mat-icon>
+          </button>
+
+          @if (isExpanded(step)) {
+            <div class="trace-step__body">
+              @for (section of step.summarySections; track section.title) {
+                <section class="trace-section trace-section--summary">
+                  <h4 class="trace-section__title">{{ section.title }}</h4>
+                  <div class="trace-section__content">
+                    <app-chat-markdown [content]="sectionMarkdown(section)" />
+                  </div>
+                </section>
+              }
+
+              @if (step.detailSections.length) {
+                <details class="trace-fold trace-fold--detail">
+                  <summary class="trace-fold__summary">详细信息</summary>
+                  <div class="trace-fold__body">
+                    @for (section of step.detailSections; track section.title) {
+                      <section class="trace-section">
+                        <h4 class="trace-section__title">{{ section.title }}</h4>
+                        <div class="trace-section__content">
+                          <app-chat-markdown [content]="sectionMarkdown(section)" />
+                        </div>
+                      </section>
+                    }
+                  </div>
+                </details>
+              }
+
+              @if (step.debugSections.length) {
+                <details class="trace-fold trace-fold--debug">
+                  <summary class="trace-fold__summary">调试详情</summary>
+                  <div class="trace-fold__body">
+                    @for (section of step.debugSections; track section.title) {
+                      <section class="trace-section">
+                        <h4 class="trace-section__title">{{ section.title }}</h4>
+                        <div class="trace-section__content">
+                          <app-chat-markdown [content]="sectionMarkdown(section)" />
+                        </div>
+                      </section>
+                    }
+                  </div>
+                </details>
+              }
+            </div>
+          }
+        </div>
+      </li>
+    }
+  </ol>
+}
