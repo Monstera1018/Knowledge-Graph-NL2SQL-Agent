@@ -15,7 +15,7 @@ from tools.progress import (
     emit_progress,
 )
 
-from tools.common import normalize_text, normalize_key
+from tools.common import normalize_text, normalize_key, utc_now_iso
 from tools.graph.internal import upsert_graph_node_tx, upsert_graph_edge_tx, build_stable_sql_uuid, \
     build_stable_table_uuid, build_stable_column_uuid, build_stable_knowledge_uuid, build_stable_enum_uuid, \
     get_graph_driver, _get_graph_database
@@ -495,13 +495,16 @@ async def import_sql_history(
                 sql_dialect = str_cell(row["数据库类型"])
 
                 sql_uuid = build_stable_sql_uuid(workspace_id, sql_name, sql_content)
+                now = utc_now_iso()
 
                 table_and_columns, error = find_all_sources(sql_content, sql_dialect.lower())
 
                 await upsert_graph_node_tx(tx,
                                            SQLNode(uuid=sql_uuid, type=NodeType.SQL, name=sql_name,
                                                    logic=sql_logic, content=sql_content, dialect=sql_dialect,
-                                                   workspace_id=workspace_id))
+                                                   workspace_id=workspace_id,
+                                                   source="import", enabled=True,
+                                                   created_at=now, updated_at=now))
 
                 if table_and_columns is None:
                     raise ValueError(error)

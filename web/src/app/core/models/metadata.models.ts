@@ -64,6 +64,10 @@ export interface SQLNode extends BaseNode {
   logic: string;
   content: string;
   dialect: string;
+  source?: 'import' | 'llm' | string;
+  enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface SQLDetail extends SQLNode {

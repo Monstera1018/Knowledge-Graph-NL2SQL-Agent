@@ -17,6 +17,7 @@ from server.chat.protocol import (
     sse_line,
 )
 from tools.llm import is_llm_quota_or_rate_limit_error
+from tools.retrieval import parse_sql_reference_samples
 
 _COPILOT_AGENT_ID = "copilot"
 _COPILOT_APP_NAME = "TYWS-Copilot"
@@ -475,11 +476,20 @@ def _extract_context_sections(text: str) -> list[dict[str, Any]]:
             for line in body.splitlines()
             if line.strip().startswith("- ")
         ]
-        sections.append({
+        section: dict[str, Any] = {
             "title": title,
             "items": items,
             "content": body,
-        })
+        }
+        if title.strip() == "SQL":
+            samples = parse_sql_reference_samples(body)
+            if samples:
+                section["sql_samples"] = samples
+                section["items"] = [
+                    str(sample.get("name") or "").strip() or "未命名样例"
+                    for sample in samples
+                ]
+        sections.append(section)
     return sections
 
 

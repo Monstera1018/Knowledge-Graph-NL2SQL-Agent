@@ -25,6 +25,9 @@ export interface ListQuery {
   q?: string;
   table_uuid?: string;
   column_uuid?: string;
+  source?: string;
+  enabled?: boolean | string;
+  sort?: string;
 }
 
 export interface GraphQuery {
@@ -172,7 +175,7 @@ export class MetadataApiService {
 
   updateSql(
     uuid: string,
-    body: Partial<Pick<SQLNode, 'name' | 'logic' | 'content' | 'dialect'>>,
+    body: Partial<Pick<SQLNode, 'name' | 'logic' | 'content' | 'dialect' | 'enabled'>>,
   ): Observable<SQLNode> {
     return this.http.put<SQLNode>(`/api/sqls/${uuid}`, body);
   }
@@ -203,6 +206,11 @@ export class MetadataApiService {
     if (query.q) params = params.set('q', query.q);
     if (query.table_uuid) params = params.set('table_uuid', query.table_uuid);
     if (query.column_uuid) params = params.set('column_uuid', query.column_uuid);
+    if (query.source) params = params.set('source', query.source);
+    if (query.enabled !== undefined && query.enabled !== '') {
+      params = params.set('enabled', String(query.enabled));
+    }
+    if (query.sort) params = params.set('sort', query.sort);
     return params;
   }
 

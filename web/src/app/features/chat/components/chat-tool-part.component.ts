@@ -9,6 +9,14 @@ type ContextSection = {
   title: string;
   items: string[];
   content?: string;
+  sqlSamples?: SqlContextSample[];
+};
+
+type SqlContextSample = {
+  name: string;
+  logic: string;
+  content: string;
+  relatedTables: string[];
 };
 
 type SelectedTableDetail = {
@@ -312,6 +320,7 @@ export class ChatToolPartComponent {
           title: title.trim(),
           items: this.stringArray(record['items']).map((value) => this.cleanMarkdown(value)),
           content: typeof record['content'] === 'string' ? record['content'] : '',
+          sqlSamples: this.sqlSamplesFromRecord(record),
         };
       })
       .filter((item): item is ContextSection => !!item);
@@ -364,6 +373,14 @@ export class ChatToolPartComponent {
 
   protected isKnowledgeContextSection(section: ContextSection): boolean {
     return this.normalizeSectionTitle(section.title) === '业务知识';
+  }
+
+  protected isSqlContextSection(section: ContextSection): boolean {
+    return this.normalizeSectionTitle(section.title) === 'SQL';
+  }
+
+  protected sqlContextSamples(section: ContextSection): SqlContextSample[] {
+    return section.sqlSamples ?? [];
   }
 
   protected tableContextGroups(section: ContextSection): TableContextGroup[] {
@@ -690,6 +707,34 @@ export class ChatToolPartComponent {
   private text(record: Record<string, unknown> | null, key: string): string {
     const value = record?.[key];
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private sqlSamplesFromRecord(record: Record<string, unknown>): SqlContextSample[] {
+    const raw = record['sql_samples'];
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw
+      .map((item): SqlContextSample | null => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const sample = item as Record<string, unknown>;
+        const name = typeof sample['name'] === 'string' ? sample['name'].trim() : '';
+        const logic = typeof sample['logic'] === 'string' ? sample['logic'].trim() : '';
+        const content = typeof sample['content'] === 'string' ? sample['content'].trim() : '';
+        const relatedTables = this.stringArray(sample['related_tables']);
+        if (!name && !logic && !content) {
+          return null;
+        }
+        return {
+          name: name || '未命名样例',
+          logic,
+          content,
+          relatedTables,
+        };
+      })
+      .filter((item): item is SqlContextSample => !!item);
   }
 
   private stringArray(value: unknown): string[] {

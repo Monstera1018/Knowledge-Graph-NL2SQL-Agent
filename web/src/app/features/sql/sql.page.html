@@ -1,7 +1,7 @@
 <div class="workbench">
   <header class="workbench__header">
     <h1 class="workbench__title">SQL</h1>
-    <p class="workbench__hint">浏览和维护历史SQL语句</p>
+    <p class="workbench__hint">浏览和维护历史 SQL。LLM 生成样例默认停用，启用后才参与问数生成。</p>
     <button
       type="button"
       class="app-btn workbench__header-action"
@@ -37,6 +37,38 @@
             <mat-icon>add</mat-icon>
           </button>
         </div>
+        <div class="sql-pane-filters">
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="sourceFilter()"
+            (ngModelChange)="onSourceFilterChange($event)"
+            aria-label="按来源筛选"
+          >
+            <option value="">全部来源</option>
+            <option value="import">人工导入</option>
+            <option value="llm">LLM生成</option>
+          </select>
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="enabledFilter()"
+            (ngModelChange)="onEnabledFilterChange($event)"
+            aria-label="按启用状态筛选"
+          >
+            <option value="">全部状态</option>
+            <option value="true">启用</option>
+            <option value="false">停用</option>
+          </select>
+          <select
+            class="sql-pane-filters__select"
+            [ngModel]="sort()"
+            (ngModelChange)="onSortChange($event)"
+            aria-label="排序方式"
+          >
+            <option value="time_desc">最近更新</option>
+            <option value="time_asc">最早更新</option>
+            <option value="name">按名称</option>
+          </select>
+        </div>
         <div class="workbench__pane-meta">
           共 {{ total() }} 条
           @if (items().length < total()) {
@@ -54,26 +86,48 @@
           <app-empty-state
             icon="code"
             title="暂无 SQL"
-            [description]="query() ? '搜索无匹配结果' : '点击上方 + 新建 SQL'"
+            [description]="query() || sourceFilter() || enabledFilter() ? '没有符合筛选条件的 SQL' : '点击上方 + 新建 SQL'"
           />
         } @else {
           @for (item of items(); track item.uuid) {
-            <button
-              type="button"
+            <div
               class="workbench__item"
               [class.workbench__item--active]="selected()?.uuid === item.uuid"
               (click)="selectItem(item)"
+              (keydown.enter)="selectItem(item)"
+              tabindex="0"
+              role="button"
             >
               <div class="workbench__item-row">
                 <span class="workbench__item-name" [appTruncateTooltip]="item.name">{{
                   item.name
                 }}</span>
-                @if (item.dialect) {
-                  <span class="workbench__item-dtype">{{ item.dialect }}</span>
-                }
+                <span class="sql-item-flags">
+                  <span
+                    class="sql-source-badge"
+                    [class.sql-source-badge--llm]="item.source === 'llm'"
+                  >{{ sourceLabel(item) }}</span>
+                  @if (item.dialect) {
+                    <span class="workbench__item-dtype">{{ item.dialect }}</span>
+                  }
+                </span>
               </div>
               <div class="workbench__item-meta">{{ item.logic || '无逻辑说明' }}</div>
-            </button>
+              @if (timeLabel(item)) {
+                <div class="sql-item-time">{{ timeLabel(item) }}</div>
+              }
+              <div class="sql-item-enable">
+                <button
+                  type="button"
+                  class="app-btn app-btn--sm"
+                  [disabled]="togglingUuid() === item.uuid"
+                  (click)="toggleEnabled($event, item)"
+                >
+                  <mat-icon>{{ isEnabled(item) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                  {{ isEnabled(item) ? '启用' : '停用' }}
+                </button>
+              </div>
+            </div>
           }
         }
       </div>
@@ -280,12 +334,25 @@
                     <h2 class="detail-card__title" [appTruncateTooltip]="selected()!.name">
                       {{ selected()!.name }}
                     </h2>
+                    <span
+                      class="sql-source-badge"
+                      [class.sql-source-badge--llm]="selected()!.source === 'llm'"
+                    >{{ sourceLabel(selected()) }}</span>
                     @if (selected()!.dialect) {
                       <span class="detail-card__dtype">{{ selected()!.dialect }}</span>
                     }
                   </div>
                 </div>
                 <div class="detail-card__toolbar">
+                  <button
+                    type="button"
+                    class="app-btn"
+                    [disabled]="togglingUuid() === selected()!.uuid"
+                    (click)="toggleEnabled($event, selected()!)"
+                  >
+                    <mat-icon>{{ isEnabled(selected()) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                    {{ isEnabled(selected()) ? '启用' : '停用' }}
+                  </button>
                   <button type="button" class="app-btn" (click)="startEdit()">
                     <mat-icon>edit</mat-icon>
                     编辑

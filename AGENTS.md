@@ -151,12 +151,15 @@ TYWS
 - 调用 `search_and_build_llm_context_with_hits()`。
 - 分别从 Milvus 的表/字段、枚举、业务知识、SQL collection 召回。
 - 再通过 Neo4j 补齐图谱关系，形成“检索上下文”。
-- 会记录未绑定表字段的通用业务知识 UUID，供后续 `load_sql_schema_context` 保留。
+- 会记录未绑定表字段的通用业务知识 UUID，以及向量命中的历史 SQL UUID，供后续 `load_sql_schema_context` 保留。
+- 历史 SQL 上下文必须包含样例名称、逻辑说明和 SQL 正文；向量命中的 SQL 会直接进入上下文，不只依赖「表反查 SQL」。
 
 重要边界：
 
 - 检索上下文不是纯 Milvus 结果，而是“Milvus 召回 + Neo4j 补全”后的结果。
 - 业务知识中未绑定表字段的通用知识不应因为选表结果而被过滤掉。
+- 向量命中的历史 SQL 样例同样应在确定表结构后继续保留，并展示逻辑说明与 SQL 正文，供 `sql_generator` 参考 JOIN 路径和字段写法；`FROM`/`JOIN` 表名仍只能来自本轮候选表白名单。样例中的额外筛选条件不得在用户问题未要求时抄入本轮 SQL。
+- 仅 `enabled=true`（缺省视为启用）的历史 SQL 会进入向量召回和图谱补全；停用条目保留在 SQL 页，但不参与生成。
 - `search` 使用 `retrieval_query`、各个 `keywords` 和 `intent` 组成多条查询；召回结果经 `dedupe_hits()` 去重后再补全图谱。
 - `tools/vector.py` 的 `_search_specs()` 在未指定 `node_types` 时，分别读取 `VECTOR_TOPK_TABLE`、`VECTOR_TOPK_ENUM`、`VECTOR_TOPK_KNOWLEDGE`、`VECTOR_TOPK_SQL`。表和字段共享一个检索配额；显式指定 `node_types` 时使用调用方的 `limit`。
 - TopK 是每条查询在相应集合中的召回上限，不是最终页面条数。多查询、图谱补全和展示拆分都会改变最终数量。
@@ -203,6 +206,7 @@ TYWS
 - 专用知识：绑定了候选表或候选字段的知识。
 - 通用知识：未绑定表字段，但在检索阶段召回的知识。
 - 当前要求：通用知识应在确定表结构后继续保留，不应被候选表过滤掉。
+- 检索阶段向量命中的历史 SQL 应继续保留；上下文中同时给出逻辑说明和 SQL 正文，条数受 `MAX_SQL_REFERENCE_SAMPLES` 限制。
 
 ### sql_generator
 
@@ -211,6 +215,8 @@ TYWS
 - 根据 schema context 生成只读 SQL。
 - 可调用 `lookup_column_values(table_name, column_name)` 查询数据库实际枚举值。
 - 输出面向用户的中文说明和一个 SQL markdown 代码块。
+- 筛选条件以用户问题为准：业务知识只做术语到字段/存储值的映射；历史 SQL 只学 JOIN 与写法，不把样例里用户未提到的剔除规则、账期或额外过滤抄进本轮查询。
+- 校验通过且执行结果有数据时，将用户问题、逻辑说明、规范化 SQL 沉淀为历史 SQL：`source=llm`，默认 `enabled=false`。Excel/页面手工创建为 `source=import`，默认启用。
 
 风险点：
 
@@ -252,6 +258,22 @@ TYWS
 - 执行校验通过的 SQL。
 - 输出 Markdown 表格。
 - 受 `SQL_EXECUTION_MAX_ROWS` 控制展示最大行数。
+- 查询结果有数据时调用 `upsert_llm_generated_sql` 沉淀样例；沉淀失败只记日志，不影响本次问数返回。
+
+### SQL 知识沉淀
+
+问数过程中校验通过、实际查出数据的 SQL，会写入现有历史 SQL 图谱节点（`/sql` 页），并解析 `USES` 表/字段血缘。
+
+约定：
+
+- `source=import`：Excel 初始化或 SQL 页手工新建，默认 `enabled=true`，写入 `TYWS_SQL` 向量。
+- `source=llm`：智能体沉淀，默认 `enabled=false`，先不写入向量。名称优先用 extractor 改写后的 `retrieval_query`。
+- UUID 仍按 workspace + 名称 + SQL 正文计算；同 UUID 的人工导入条目不会被 LLM 沉淀覆盖。
+- 沉淀前会与现存 SQL 做相似度校验（规范化 SQL、表集合、字面量、名称）。达到 `SQL_MERGE_SIMILARITY_THRESHOLD`（默认 0.84）则合并到已有样例：人工导入只跳过新建；LLM 样例保留原 UUID/名称/启用状态，更新逻辑说明与最新 SQL。不同地区等字面量差异不会合并。
+- 空结果、无法解析血缘的语句不沉淀。
+- SQL 节点记录 `created_at` / `updated_at`。SQL 页可按来源、启用状态筛选，并按最近更新、最早更新或名称排序。
+- SQL 页「启用 / 停用」写入 `enabled`。停用时删除对应向量记录，召回 Cypher 使用 `coalesce(s.enabled, true)=true`，旧节点缺字段视为启用。
+- 启用后的样例才进入 search / schema context，供后续 SQL 生成参考。
 
 ## 数据初始化和导入
 
@@ -297,7 +319,7 @@ python scripts\init.py
 - `/enums`：枚举值
 - `/relations`：表关系
 - `/knowledge`：业务知识
-- `/sql`：历史 SQL
+- `/sql`：历史 SQL（区分人工导入 / LLM 生成，可用「启用 / 停用」控制是否参与问数生成；左侧支持来源/状态筛选与时间排序）
 - `/ingest`：导入任务
 
 智能对话页：
@@ -317,6 +339,8 @@ python scripts\init.py
 - 数据表模块和“库表结构（供生成 SQL）”按表分组，展示表中文名、英文名、摘要及字段内容。
 - “库表结构（供生成 SQL）”、表关系、业务知识、SQL 是同级分类，不要在库表结构下再加“数据表”这一层。
 - 业务知识分为专用知识和通用知识。当前前端 `knowledgeContextGroups()` 根据文本特征分组；后端通用知识保留依赖图谱绑定关系与召回 UUID，两者不能相互替代。
+- SQL 分类展示样例名称、逻辑说明和 SQL 正文；条数按样例条数计，不要把语句行拆成多条。
+- SQL 页条目需展示来源（人工导入 / LLM 生成）和「启用 / 停用」按钮；LLM 沉淀样例默认停用，启用后才写入向量并进入召回。
 - 选表结果集中展示中文名、英文名和一份选表理由；合并节点过滤重复的“用户问题、选表说明、候选表”分类，独立 `schema_plan` 部件不再重复展示。
 - 原始输入/输出仍可在默认收起的“查看技术详情”中查看，业务摘要优先使用中文。
 
@@ -432,6 +456,7 @@ VECTOR_TOPK_TABLE=10
 VECTOR_TOPK_ENUM=8
 VECTOR_TOPK_KNOWLEDGE=8
 VECTOR_TOPK_SQL=5
+SQL_MERGE_SIMILARITY_THRESHOLD=0.84
 VECTOR_DIMENSION=2048
 VECTOR_URI=http://127.0.0.1:29531
 
@@ -494,7 +519,11 @@ SQL 生成链路中，物理表名必须来自：
 
 ### 业务知识优先，但要明确边界
 
-业务知识是口径、指标、规则的优先来源。若业务知识给出明确取值集合，后续优化应将其视为闭集，避免模型根据字段枚举自行扩展。
+业务知识用来解释用户问题里已经出现的术语、指标和取值集合，而不是把知识全文的所有稽核规则都变成过滤条件。
+
+- 用户说「宗教」「居民合表」时，应把这些词映射到行业分类、电价名称等存储值。
+- 用户没提到的定量定比剔除、分表/分户计量、默认账期下限等，即使出现在业务知识或历史 SQL 样例中，也不应写入本轮 SQL。
+- 若业务知识给出明确取值集合，应视为闭集，避免模型根据字段枚举自行扩展。
 
 示例：
 
@@ -535,6 +564,7 @@ SQL 生成链路中，物理表名必须来自：
 - Milvus 向量检索与 Neo4j 图谱补全协同。
 - ADK 智能体链路：问题解析、检索、选表、汇总表结构、生成 SQL、校验 SQL、执行 SQL。
 - 元数据维护页面：数据目录、枚举值、表关系、业务知识、SQL。
+- 问数成功且有结果时沉淀 LLM 生成 SQL；SQL 页以来源标记和「启用 / 停用」控制是否参与生成。
 - 导入任务页面和 Excel 初始化。
 - 前端智能对话与工作流轨迹展示。
 

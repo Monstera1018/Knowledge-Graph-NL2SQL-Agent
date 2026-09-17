@@ -138,6 +138,7 @@ class SQLUpdate(BaseModel):
     logic: str | None = None
     content: str | None = None
     dialect: str | None = None
+    enabled: bool | None = None
 
 
 class SQLDetail(BaseModel):
@@ -147,6 +148,10 @@ class SQLDetail(BaseModel):
     logic: str = ""
     content: str = ""
     dialect: str = ""
+    source: str = "import"
+    enabled: bool = True
+    created_at: str = ""
+    updated_at: str = ""
     relations: list[KnowledgeRelationView] = Field(default_factory=list)
 
 
@@ -544,9 +549,20 @@ async def list_sql_items(
         page: int = Query(1, ge=1),
         page_size: int = Query(MAX_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
         q: str | None = Query(None, description="按名称/逻辑/内容/方言搜索"),
+        source: str | None = Query(None, description="import 或 llm"),
+        enabled: bool | None = Query(None, description="是否用于 SQL 生成"),
+        sort: str | None = Query(None, description="time_desc、time_asc 或 name"),
         workspace_id: str = Depends(get_workspace_id),
 ) -> Page[SQLNode]:
-    result = await list_sqls(workspace_id=workspace_id, page=page, page_size=page_size, q=q)
+    result = await list_sqls(
+        workspace_id=workspace_id,
+        page=page,
+        page_size=page_size,
+        q=q,
+        source=source,
+        enabled=enabled,
+        sort=sort,
+    )
     return Page(
         items=result.items,
         total=result.total,
@@ -583,6 +599,10 @@ async def get_sql_item(
         logic=node.logic,
         content=node.content,
         dialect=node.dialect,
+        source=str(node.source),
+        enabled=bool(node.enabled),
+        created_at=node.created_at or "",
+        updated_at=node.updated_at or "",
         relations=[
             KnowledgeRelationView(
                 table_name=relation.table_name,
@@ -607,6 +627,7 @@ async def update_sql_item(
         logic=body.logic,
         content=body.content,
         dialect=body.dialect,
+        enabled=body.enabled,
     )
 
 

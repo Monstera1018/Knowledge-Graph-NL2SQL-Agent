@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 
 def require_non_empty_env(name: str) -> str:
@@ -24,6 +25,11 @@ def normalize_key(value: str) -> str:
 
 def normalize_text(value: str) -> str:
     return (value or "").strip()
+
+
+def utc_now_iso() -> str:
+    """UTC 时间，秒级 ISO-8601，便于 Neo4j 字符串排序。"""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def to_litellm_model_name(model: str) -> str:

@@ -21,6 +21,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
+# 不宜做成图谱枚举的高基数列，可把取值池放在本地（不提交）：
+# resources/data/seed_values/{表名}.{列名}.txt，每行一个实际值。
+_SEED_VALUE_DIR = _PROJECT_ROOT / "resources" / "data" / "seed_values"
+_VALUE_POOLS: dict[tuple[str, str], list[str]] | None = None
+
 from tools.graph.internal import _run_read, close_graph_driver
 from tools.graph.model import EdgeType, NodeType
 
@@ -310,9 +315,33 @@ def _datetime_value(rng: random.Random, ym: str, as_date: bool = False) -> str:
     return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:00"
 
 
+def load_seed_value_pools() -> dict[tuple[str, str], list[str]]:
+    """读取不宜枚举的列取值池；文件缺失时该列仍走原有造数规则。"""
+    global _VALUE_POOLS
+    if _VALUE_POOLS is not None:
+        return _VALUE_POOLS
+    pools: dict[tuple[str, str], list[str]] = {}
+    if _SEED_VALUE_DIR.is_dir():
+        for path in sorted(_SEED_VALUE_DIR.glob("*.txt")):
+            stem = path.stem.strip()
+            if "." not in stem:
+                continue
+            table_name, column_name = stem.rsplit(".", 1)
+            values = [
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if values:
+                pools[(table_name.strip().lower(), column_name.strip().lower())] = values
+    _VALUE_POOLS = pools
+    return pools
+
+
 def value_for(
         column: ColumnSpec,
         *,
+        table_name: str,
         entity: Entity,
         peer: Entity,
         ym: str,
@@ -329,6 +358,9 @@ def value_for(
     geo_value = _geo_field_value(column, entity)
     if geo_value is not None:
         return geo_value
+    pool = load_seed_value_pools().get((table_name.lower(), lower))
+    if pool:
+        return rng.choice(pool)
     if column.enums:
         return _pick_enum(column, rng, entity)
     if lower in _CUSTOMER_COLS:
@@ -421,6 +453,7 @@ def insert_rows(
         values = [
             value_for(
                 colmap[name],
+                table_name=table.name,
                 entity=entity,
                 peer=peer,
                 ym=ym,

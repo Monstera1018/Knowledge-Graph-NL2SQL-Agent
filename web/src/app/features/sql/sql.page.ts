@@ -20,7 +20,7 @@ import { EmptyStateComponent } from '../../shared/components/empty-state.compone
 import { GraphSnapshotComponent } from '../../shared/components/graph-snapshot/graph-snapshot.component';
 import { SqlHighlightComponent } from '../../shared/components/sql-highlight/sql-highlight.component';
 import { AppTruncateTooltipDirective } from '../../shared/directives/truncate-tooltip.directive';
-import { SqlFormDraft, SqlFormMode, emptySqlForm, sqlToDraft } from './sql.models';
+import { SqlFormDraft, SqlFormMode, emptySqlForm, sqlIsEnabled, sqlSourceLabel, sqlTimeLabel, sqlToDraft } from './sql.models';
 
 type SqlDetailView = 'detail' | 'graph';
 
@@ -63,6 +63,11 @@ export class SqlPage {
   protected readonly graphDepth = signal(1);
   protected readonly graphFocusUuid = signal<string | null>(null);
 
+  protected readonly togglingUuid = signal<string | null>(null);
+  protected readonly sourceFilter = signal('');
+  protected readonly enabledFilter = signal('');
+  protected readonly sort = signal('time_desc');
+
   protected readonly relationStats = computed(() => {
     const rels = this.relations();
     return {
@@ -100,7 +105,7 @@ export class SqlPage {
         distinctUntilChanged(),
         switchMap((q) => {
           this.loading.set(true);
-          return this.api.listSqls(listAllQuery({ q: q || undefined })).pipe(
+          return this.api.listSqls(this.buildListQuery(q)).pipe(
             catchError((err) => {
               this.loading.set(false);
               this.handleError('加载 SQL 列表失败', err);
@@ -123,6 +128,21 @@ export class SqlPage {
   protected onQueryChange(value: string): void {
     this.query.set(value);
     this.search$.next(value);
+  }
+
+  protected onSourceFilterChange(value: string): void {
+    this.sourceFilter.set(value);
+    this.fetchItems();
+  }
+
+  protected onEnabledFilterChange(value: string): void {
+    this.enabledFilter.set(value);
+    this.fetchItems();
+  }
+
+  protected onSortChange(value: string): void {
+    this.sort.set(value || 'time_desc');
+    this.fetchItems();
   }
 
   protected selectItem(item: SQLNode): void {
@@ -284,15 +304,56 @@ export class SqlPage {
     this.logicExpanded.update((value) => !value);
   }
 
+  protected sourceLabel(item: SQLNode | null): string {
+    return sqlSourceLabel(item);
+  }
+
+  protected isEnabled(item: SQLNode | null): boolean {
+    return sqlIsEnabled(item);
+  }
+
+  protected timeLabel(item: SQLNode | null): string {
+    return sqlTimeLabel(item);
+  }
+
+  protected toggleEnabled(event: Event, item: SQLNode): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.togglingUuid() === item.uuid) {
+      return;
+    }
+    const nextEnabled = !sqlIsEnabled(item);
+    this.togglingUuid.set(item.uuid);
+    this.api
+      .updateSql(item.uuid, { enabled: nextEnabled })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.togglingUuid.set(null);
+          this.items.update((items) =>
+            items.map((row) => (row.uuid === saved.uuid ? { ...row, ...saved } : row)),
+          );
+          if (this.selected()?.uuid === saved.uuid) {
+            this.selected.update((current) => (current ? { ...current, ...saved } : saved));
+          }
+          this.snack.success(nextEnabled ? '已启用，将用于 SQL 生成' : '已停用，不再用于 SQL 生成');
+        },
+        error: (err) => {
+          this.togglingUuid.set(null);
+          this.handleError('更新启用状态失败', err);
+        },
+      });
+  }
+
   protected patchFormField(field: keyof SqlFormDraft, value: string): void {
     this.formDraft.update((draft) => ({ ...draft, [field]: value }));
   }
 
-  private fetchItems(q = ''): void {
+  private fetchItems(q = this.query()): void {
     const requestId = this.listGuard.next();
     this.loading.set(true);
     this.api
-      .listSqls(listAllQuery({ q: q || undefined }))
+      .listSqls(this.buildListQuery(q))
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (page) => {
@@ -390,6 +451,16 @@ export class SqlPage {
           this.handleError('加载关系图谱失败', err);
         },
       });
+  }
+
+  private buildListQuery(q = this.query()) {
+    const enabledFilter = this.enabledFilter();
+    return listAllQuery({
+      q: q.trim() || undefined,
+      source: this.sourceFilter() || undefined,
+      enabled: enabledFilter === '' ? undefined : enabledFilter,
+      sort: this.sort() || 'time_desc',
+    });
   }
 
   private handleError(message: string, err: unknown): void {

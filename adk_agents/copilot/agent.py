@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import json
 import sys
@@ -31,6 +32,7 @@ from adk_agents.copilot.helpers import (
     SQL_SELECTED_TABLE_DETAILS_STATE_KEY,
     SQL_LAST_ATTEMPT_STATE_KEY,
     SQL_VALIDATED_SQL_STATE_KEY,
+    SQL_GENERATOR_LOGIC_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
     EXTRACTOR_RESULT_STATE_KEY,
     MAX_PLANNER_TURNS,
@@ -41,6 +43,7 @@ from adk_agents.copilot.helpers import (
     NO_USABLE_TABLE_MESSAGE,
     clear_state_key,
     conversation_history_for_extractor,
+    extract_sql_logic_from_output,
     format_extractor_user_message,
     format_sql_execution_response,
     format_sql_generator_user_message,
@@ -115,10 +118,13 @@ from tools.retrieval import (
 from tools.sql import extract_sql_statements_from_text, validate_read_sql
 from tools.common import to_litellm_model_name, require_non_empty_env
 
+logger = logging.getLogger(__name__)
+
 SQL_DIALECT = get_sql_read_dialect()
 TABLE_CANDIDATES_STATE_KEY = "table_candidates"
 SELECTED_TABLES_STATE_KEY = "selected_tables"
 RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY = "retrieved_knowledge_uuids"
+RETRIEVED_SQL_UUIDS_STATE_KEY = "retrieved_sql_uuids"
 
 _TABLE_HEADING_RE = re.compile(
     r"(?m)^-\s+\*\*([A-Za-z0-9_][A-Za-z0-9_.$]*)\*\*"
@@ -184,10 +190,12 @@ def reset_sql_turn_state(ctx: Context, node_input: str) -> str:
             SQL_VALIDATION_FEEDBACK_STATE_KEY,
             SQL_LAST_ATTEMPT_STATE_KEY,
             SQL_VALIDATED_SQL_STATE_KEY,
+            SQL_GENERATOR_LOGIC_STATE_KEY,
             SQL_GENERATION_ATTEMPT_STATE_KEY,
             SELECTED_TABLES_STATE_KEY,
             TABLE_CANDIDATES_STATE_KEY,
             RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY,
+            RETRIEVED_SQL_UUIDS_STATE_KEY,
             PLAN_STATE_KEY,
             PLAN_OBSERVATION_STATE_KEY,
             PLAN_TURN_COUNT_STATE_KEY,
@@ -577,6 +585,11 @@ async def search(
     table_candidates = _extract_table_candidates(retrieval_context)
     ctx.state[TABLE_CANDIDATES_STATE_KEY] = table_candidates
     ctx.state[RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY] = search_result.unbound_knowledge_hit_uuids
+    ctx.state[RETRIEVED_SQL_UUIDS_STATE_KEY] = [
+        str(item).strip()
+        for item in (search_result.sql_hit_uuids or [])
+        if str(item).strip()
+    ]
 
     if user_message:
         save_user_message_to_state(ctx, user_message)
@@ -685,12 +698,18 @@ async def load_sql_schema_context(
             for item in (ctx.state.get(RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY) or [])
             if str(item).strip()
         ],
+        extra_sql_uuids=[
+            str(item).strip()
+            for item in (ctx.state.get(RETRIEVED_SQL_UUIDS_STATE_KEY) or [])
+            if str(item).strip()
+        ],
     )
     ctx.state[SQL_SCHEMA_CONTEXT_STATE_KEY] = schema_text
     ctx.state[SQL_GENERATION_ATTEMPT_STATE_KEY] = 0
     clear_state_key(ctx, SQL_VALIDATION_FEEDBACK_STATE_KEY)
     clear_state_key(ctx, SQL_LAST_ATTEMPT_STATE_KEY)
     clear_state_key(ctx, SQL_VALIDATED_SQL_STATE_KEY)
+    clear_state_key(ctx, SQL_GENERATOR_LOGIC_STATE_KEY)
     return schema_text
 
 
@@ -809,6 +828,11 @@ async def validate_sql(ctx: Context, node_input) -> Event:
         clear_state_key(ctx, SQL_LAST_ATTEMPT_STATE_KEY)
         if normalized_sql.strip():
             ctx.state[SQL_VALIDATED_SQL_STATE_KEY] = normalized_sql.strip()
+        logic = extract_sql_logic_from_output(raw_text)
+        if logic:
+            ctx.state[SQL_GENERATOR_LOGIC_STATE_KEY] = logic
+        else:
+            clear_state_key(ctx, SQL_GENERATOR_LOGIC_STATE_KEY)
         return Event(output=_validation_output({"ok": True}))
 
     attempt += 1
@@ -884,7 +908,40 @@ async def execute_sql(ctx: Context, node_input) -> str:
         result_sets.append((rows, truncated))
 
     save_query_snapshot(ctx, result_sets)
+    await _precipitate_executed_sql(ctx, statements, result_sets)
     return format_sql_execution_response(statements, result_sets)
+
+
+async def _precipitate_executed_sql(
+        ctx: Context,
+        statements: list[str],
+        result_sets: list[tuple[list[dict[str, object]], bool]],
+) -> None:
+    """问数成功且查出数据后，把 Query-SQL 沉淀为 LLM 生成样例。"""
+    has_rows = any(bool(rows) for rows, _ in result_sets)
+    if not has_rows:
+        return
+    extraction = load_extractor_result(ctx)
+    question = (
+        (extraction.retrieval_query or "").strip()
+        or resolve_user_message(ctx).strip()
+    )
+    content = "\n\n".join(item.strip() for item in statements if item.strip())
+    logic = str(ctx.state.get(SQL_GENERATOR_LOGIC_STATE_KEY) or "").strip()
+    if not question or not content:
+        return
+    try:
+        from tools.graph.crud.sql import upsert_llm_generated_sql
+
+        await upsert_llm_generated_sql(
+            resolve_workspace_id(ctx),
+            question=question,
+            logic=logic or "由问数助手根据用户问题生成。",
+            content=content,
+            dialect=SQL_DIALECT,
+        )
+    except Exception:
+        logger.exception("沉淀 LLM 生成 SQL 失败")
 
 
 root_agent = Workflow(

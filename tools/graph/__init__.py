@@ -10,7 +10,8 @@ from tools.graph.crud.knowledge import (
     list_knowledge_relations,
     update_knowledge,
 )
-from tools.graph.crud.sql import create_sql, delete_sql, get_sql, list_sql_relations, list_sqls, update_sql
+from tools.graph.crud.sql import create_sql, delete_sql, get_sql, list_sql_relations, list_sqls, update_sql, \
+    upsert_llm_generated_sql
 from tools.graph.crud.table import (
     create_table,
     delete_table,

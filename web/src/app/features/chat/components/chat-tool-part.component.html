@@ -88,6 +88,23 @@
                       </section>
                     }
                   </div>
+                } @else if (isSqlContextSection(section) && sqlContextSamples(section).length) {
+                  <div class="chat-part__knowledge-groups">
+                    @for (sample of sqlContextSamples(section); track sample.name + sample.content) {
+                      <section class="chat-part__knowledge-group">
+                        <div class="chat-part__knowledge-title">{{ sample.name }}</div>
+                        @if (sample.logic) {
+                          <p class="chat-part__table-summary">{{ sample.logic }}</p>
+                        }
+                        @if (sample.relatedTables.length) {
+                          <div class="chat-part__context-item-sub">关联 {{ sample.relatedTables.join('、') }}</div>
+                        }
+                        @if (sample.content) {
+                          <pre class="chat-part__sql-sample"><code>{{ sample.content }}</code></pre>
+                        }
+                      </section>
+                    }
+                  </div>
                 } @else if (section.items.length) {
                   <div class="chat-part__context-list">
                     @for (item of section.items; track item) {

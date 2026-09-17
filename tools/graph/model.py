@@ -1,8 +1,8 @@
 from enum import StrEnum
-from typing import List
+from typing import Any, List
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class NodeType(StrEnum):
@@ -50,11 +50,52 @@ class KnowledgeNode(BaseNode):
     description: str
 
 
+class SQLSource(StrEnum):
+    IMPORT = "import"
+    LLM = "llm"
+
+
+def normalize_sql_source(value: Any) -> SQLSource:
+    text = str(value or "").strip().lower()
+    if text in {SQLSource.LLM.value, "generated", "runtime", "llm生成"}:
+        return SQLSource.LLM
+    return SQLSource.IMPORT
+
+
+def normalize_sql_enabled(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+
 class SQLNode(BaseNode):
     name: str
     logic: str
     content: str
     dialect: str
+    source: SQLSource = SQLSource.IMPORT
+    enabled: bool = True
+    created_at: str = ""
+    updated_at: str = ""
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _coerce_source(cls, value: Any) -> SQLSource:
+        return normalize_sql_source(value)
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _coerce_enabled(cls, value: Any) -> bool:
+        return normalize_sql_enabled(value)
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def _coerce_timestamp(cls, value: Any) -> str:
+        return str(value or "").strip()
 
 
 class EdgeType(StrEnum):

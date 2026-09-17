@@ -15,6 +15,7 @@ SQL_SCHEMA_CONTEXT_STATE_KEY = "sql_schema_context"
 SQL_VALIDATION_FEEDBACK_STATE_KEY = "sql_validation_feedback"
 SQL_LAST_ATTEMPT_STATE_KEY = "sql_last_attempt"
 SQL_VALIDATED_SQL_STATE_KEY = "sql_validated_sql"
+SQL_GENERATOR_LOGIC_STATE_KEY = "sql_generator_logic"
 SQL_GENERATION_ATTEMPT_STATE_KEY = "sql_generation_attempt"
 SQL_SELECTED_TABLE_DETAILS_STATE_KEY = "sql_selected_table_details"
 NO_USABLE_TABLE_MESSAGE = "未识别到可用数据表，请补充查询目标。"
@@ -297,6 +298,18 @@ def save_sql_last_attempt(ctx: Context, text: str) -> None:
     )
     if content:
         ctx.state[SQL_LAST_ATTEMPT_STATE_KEY] = content
+
+
+def extract_sql_logic_from_output(text: str) -> str:
+    """从 sql_generator 输出中抽出中文逻辑说明，去掉 SQL 代码块。"""
+    cleaned = re.sub(
+        r"```(?:sql)?\s*.*?```",
+        "",
+        text or "",
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned[:2000]
 
 
 def format_sql_generator_user_message(ctx: Context, node_input) -> str:
