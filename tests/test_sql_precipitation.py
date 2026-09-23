@@ -1,7 +1,7 @@
 import unittest
 
 from adk_agents.copilot.helpers import extract_sql_logic_from_output
-from tools.graph.model import SQLNode, SQLSource, normalize_sql_enabled, normalize_sql_source
+from tools.graph.model import SQLNode, SQLReviewStatus, SQLSource, normalize_sql_enabled, normalize_sql_source
 from tools.sql_similarity import (
     find_best_similar_sql,
     merge_sql_logic,
@@ -37,8 +37,40 @@ class SqlPrecipitationHelpersTest(unittest.TestCase):
         })
         self.assertEqual(node.source, SQLSource.IMPORT)
         self.assertTrue(node.enabled)
+        self.assertEqual(node.review_status, SQLReviewStatus.APPROVED)
+        self.assertTrue(node.knowledge_extracted)
         self.assertEqual(node.created_at, "")
         self.assertEqual(node.updated_at, "")
+
+    def test_legacy_llm_disabled_is_pending(self) -> None:
+        node = SQLNode.model_validate({
+            "uuid": "abc",
+            "workspace_id": "default",
+            "type": "SQL",
+            "name": "样例",
+            "logic": "说明",
+            "content": "SELECT 1",
+            "dialect": "sqlite",
+            "source": "llm",
+            "enabled": False,
+        })
+        self.assertEqual(node.review_status, SQLReviewStatus.PENDING)
+        self.assertFalse(node.knowledge_extracted)
+
+    def test_legacy_enabled_llm_is_approved_and_extracted(self) -> None:
+        node = SQLNode.model_validate({
+            "uuid": "abc",
+            "workspace_id": "default",
+            "type": "SQL",
+            "name": "样例",
+            "logic": "说明",
+            "content": "SELECT 1",
+            "dialect": "sqlite",
+            "source": "llm",
+            "enabled": True,
+        })
+        self.assertEqual(node.review_status, SQLReviewStatus.APPROVED)
+        self.assertTrue(node.knowledge_extracted)
 
 
 class SqlSimilarityTest(unittest.TestCase):

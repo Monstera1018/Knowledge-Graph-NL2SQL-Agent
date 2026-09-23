@@ -23,6 +23,7 @@ import { ChatWorkflowPartComponent } from './chat-workflow-part.component';
 export class ChatPartComponent {
   readonly part = input.required<MessagePart>();
   readonly streaming = input(false);
+  readonly question = input('');
 
   protected readonly textPart = computed(() => {
     const part = this.part();

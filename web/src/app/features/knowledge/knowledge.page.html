@@ -1,7 +1,7 @@
 <div class="workbench">
   <header class="workbench__header">
     <h1 class="workbench__title">业务知识</h1>
-    <p class="workbench__hint">浏览和维护业务知识</p>
+    <p class="workbench__hint">浏览和维护业务知识。SQL 审核通过后抽取的知识先进入待审核：通过后启用，不通过则删除。</p>
     <button
       type="button"
       class="app-btn workbench__header-action"
@@ -37,6 +37,39 @@
             <mat-icon>add</mat-icon>
           </button>
         </div>
+        <div class="knowledge-pane-filters">
+          <select
+            class="knowledge-pane-filters__select"
+            [ngModel]="sourceFilter()"
+            (ngModelChange)="onSourceFilterChange($event)"
+            aria-label="按来源筛选"
+          >
+            <option value="">全部来源</option>
+            <option value="import">人工导入</option>
+            <option value="llm">LLM抽取</option>
+          </select>
+          <select
+            class="knowledge-pane-filters__select"
+            [ngModel]="statusFilter()"
+            (ngModelChange)="onStatusFilterChange($event)"
+            aria-label="按状态筛选"
+          >
+            <option value="">全部状态</option>
+            <option value="enabled">启用</option>
+            <option value="disabled">停用</option>
+            <option value="pending">待审核</option>
+          </select>
+          <select
+            class="knowledge-pane-filters__select"
+            [ngModel]="sort()"
+            (ngModelChange)="onSortChange($event)"
+            aria-label="排序方式"
+          >
+            <option value="time_desc">最近更新</option>
+            <option value="time_asc">最早更新</option>
+            <option value="name">按名称</option>
+          </select>
+        </div>
         <div class="workbench__pane-meta">
           共 {{ total() }} 条
           @if (items().length < total()) {
@@ -54,19 +87,68 @@
           <app-empty-state
             icon="lightbulb"
             title="暂无知识条目"
-            [description]="query() ? '搜索无匹配结果' : '点击上方 + 新建知识条目'"
+            [description]="query() || sourceFilter() || statusFilter() ? '没有符合筛选条件的知识' : '点击上方 + 新建知识条目'"
           />
         } @else {
           @for (item of items(); track item.uuid) {
-            <button
-              type="button"
+            <div
               class="workbench__item"
               [class.workbench__item--active]="selected()?.uuid === item.uuid"
               (click)="selectItem(item)"
+              (keydown.enter)="selectItem(item)"
+              tabindex="0"
+              role="button"
             >
-              <div class="workbench__item-name">{{ item.name }}</div>
+              <div class="workbench__item-row">
+                <div class="workbench__item-name">{{ item.name }}</div>
+                <span class="knowledge-item-flags">
+                  <span
+                    class="knowledge-source-badge"
+                    [class.knowledge-source-badge--llm]="item.source === 'llm'"
+                  >{{ sourceLabel(item) }}</span>
+                  <span
+                    class="knowledge-review-badge"
+                    [class.knowledge-review-badge--pending]="isPending(item)"
+                  >{{ reviewLabel(item) }}</span>
+                </span>
+              </div>
               <div class="workbench__item-meta">{{ item.description || '无描述' }}</div>
-            </button>
+              @if (timeLabel(item)) {
+                <div class="knowledge-item-time">{{ timeLabel(item) }}</div>
+              }
+              <div class="knowledge-item-enable">
+                @if (isPending(item)) {
+                  <button
+                    type="button"
+                    class="app-btn app-btn--sm"
+                    [disabled]="reviewingUuid() === item.uuid"
+                    (click)="approveItem($event, item)"
+                  >
+                    <mat-icon>check</mat-icon>
+                    {{ reviewingUuid() === item.uuid ? '审核中…' : '通过' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="app-btn app-btn--sm app-btn--danger"
+                    [disabled]="reviewingUuid() === item.uuid"
+                    (click)="rejectItem($event, item)"
+                  >
+                    <mat-icon>close</mat-icon>
+                    不通过
+                  </button>
+                } @else {
+                  <button
+                    type="button"
+                    class="app-btn app-btn--sm"
+                    [disabled]="togglingUuid() === item.uuid"
+                    (click)="toggleEnabled($event, item)"
+                  >
+                    <mat-icon>{{ isEnabled(item) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                    {{ isEnabled(item) ? '启用' : '停用' }}
+                  </button>
+                }
+              </div>
+            </div>
           }
         }
       </div>
@@ -225,8 +307,46 @@
                 <div class="detail-card__identity">
                   <span class="detail-card__badge detail-card__badge--knowledge">知识</span>
                   <h2 class="detail-card__title">{{ selected()!.name }}</h2>
+                  <span
+                    class="knowledge-source-badge"
+                    [class.knowledge-source-badge--llm]="selected()!.source === 'llm'"
+                  >{{ sourceLabel(selected()) }}</span>
+                  <span
+                    class="knowledge-review-badge"
+                    [class.knowledge-review-badge--pending]="isPending(selected())"
+                  >{{ reviewLabel(selected()) }}</span>
                 </div>
                 <div class="detail-card__toolbar">
+                  @if (isPending(selected())) {
+                    <button
+                      type="button"
+                      class="app-btn"
+                      [disabled]="reviewingUuid() === selected()!.uuid"
+                      (click)="approveItem($event, selected()!)"
+                    >
+                      <mat-icon>check</mat-icon>
+                      {{ reviewingUuid() === selected()!.uuid ? '审核中…' : '通过' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="app-btn app-btn--danger"
+                      [disabled]="reviewingUuid() === selected()!.uuid"
+                      (click)="rejectItem($event, selected()!)"
+                    >
+                      <mat-icon>close</mat-icon>
+                      不通过
+                    </button>
+                  } @else {
+                    <button
+                      type="button"
+                      class="app-btn"
+                      [disabled]="togglingUuid() === selected()!.uuid"
+                      (click)="toggleEnabled($event, selected()!)"
+                    >
+                      <mat-icon>{{ isEnabled(selected()) ? 'toggle_on' : 'toggle_off' }}</mat-icon>
+                      {{ isEnabled(selected()) ? '启用' : '停用' }}
+                    </button>
+                  }
                   <button type="button" class="app-btn" (click)="startEdit()">
                     <mat-icon>edit</mat-icon>
                     编辑

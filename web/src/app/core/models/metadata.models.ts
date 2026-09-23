@@ -48,6 +48,12 @@ export interface EnumListItem extends EnumNode {
 export interface KnowledgeNode extends BaseNode {
   name: string;
   description: string;
+  source?: 'import' | 'llm' | string;
+  enabled?: boolean;
+  review_status?: 'pending' | 'approved' | string;
+  source_sql_uuid?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface KnowledgeRelation {
@@ -66,12 +72,23 @@ export interface SQLNode extends BaseNode {
   dialect: string;
   source?: 'import' | 'llm' | string;
   enabled?: boolean;
+  review_status?: 'pending' | 'approved' | string;
+  knowledge_extracted?: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
 export interface SQLDetail extends SQLNode {
   relations: KnowledgeRelation[];
+}
+
+export interface SQLPrecipitateResult {
+  action: 'created' | 'updated' | 'merged' | 'skipped' | 'empty' | string;
+  uuid: string;
+  name: string;
+  source: string;
+  review_status: string;
+  enabled: boolean;
 }
 
 export type {

@@ -15,6 +15,7 @@
           <app-chat-part
             [part]="part"
             [streaming]="assistant.status === 'streaming' && part.kind === 'text'"
+            [question]="question()"
           />
         }
       } @else if (assistant.status === 'streaming') {

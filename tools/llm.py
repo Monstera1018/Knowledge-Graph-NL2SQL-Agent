@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
@@ -20,7 +21,8 @@ _QUOTA_OR_RATE_RE = re.compile(
     r"request burst|slow down traffic|system protection|"
     r"rate.?limit|too many requests|tpm|rpm|throttl|"
     r"quota|insufficient_quota|resource.?exhausted|"
-    r"budget.?exceeded|overloaded|429\b",
+    r"budget.?exceeded|overloaded|429\b|"
+    r"突发保护|限流|额度|访问过于频繁|请求过多",
     re.I,
 )
 _AUTH_RE = re.compile(
@@ -28,6 +30,37 @@ _AUTH_RE = re.compile(
     re.I,
 )
 _FALLBACK_DELAY_S = 0.5
+_RATE_LIMIT_COOLDOWN_S = 180.0
+_RATE_LIMITED_UNTIL: dict[str, float] = {}
+
+
+def _cooldown_id(item: Any) -> str:
+    if isinstance(item, LlmProfile):
+        return f"{item.name}|{item.api_base}|{item.model}"
+    if isinstance(item, (tuple, list)) and item:
+        return "|".join(str(part) for part in item[:2])
+    name = str(getattr(item, "profile_name", "") or getattr(item, "name", "") or "")
+    model = str(getattr(item, "model", "") or "")
+    return name or model or str(id(item))
+
+
+def mark_profile_rate_limited(item: Any, *, seconds: float = _RATE_LIMIT_COOLDOWN_S) -> None:
+    """主套餐刚限流后，后续调用先走另一套，避免每个节点再撞一次。"""
+    _RATE_LIMITED_UNTIL[_cooldown_id(item)] = time.monotonic() + max(float(seconds), 0.0)
+
+
+def clear_profile_rate_limits() -> None:
+    _RATE_LIMITED_UNTIL.clear()
+
+
+def _is_profile_cooling(item: Any) -> bool:
+    return time.monotonic() < _RATE_LIMITED_UNTIL.get(_cooldown_id(item), 0.0)
+
+
+def order_profiles_for_attempt(items: list[Any]) -> list[Any]:
+    ready = [item for item in items if not _is_profile_cooling(item)]
+    cooling = [item for item in items if _is_profile_cooling(item)]
+    return ready + cooling
 
 
 @dataclass(frozen=True)
@@ -45,7 +78,7 @@ def _optional_env(name: str) -> str:
 
 
 def load_llm_profiles() -> list[LlmProfile]:
-    """主套餐必填；备用套餐（通常为 Agent Plan）配齐 base 与 key 后才会启用。"""
+    """主套餐必填；备用套餐配齐 base 与 key 后才会启用。当前约定主套餐优先 Agent Plan。"""
 
     primary = LlmProfile(
         name="primary",
@@ -135,6 +168,30 @@ def is_llm_quota_or_rate_limit_error(exc: BaseException) -> bool:
     return False
 
 
+def _chunk_has_model_output(chunk: Any) -> bool:
+    """是否已向调用方产出实质模型内容。空的流式分片不计入，以免挡住套餐切换。"""
+
+    if chunk is None:
+        return False
+    if isinstance(chunk, str):
+        return bool(chunk.strip())
+    if getattr(chunk, "error_message", None) or getattr(chunk, "error_code", None):
+        return False
+    content = getattr(chunk, "content", None)
+    parts = getattr(content, "parts", None) if content is not None else None
+    if not parts:
+        return False
+    for part in parts:
+        text = getattr(part, "text", None)
+        if isinstance(text, str) and text.strip():
+            return True
+        if getattr(part, "function_call", None):
+            return True
+        if getattr(part, "executable_code", None) or getattr(part, "inline_data", None):
+            return True
+    return False
+
+
 async def generate_with_failover(
     backends: list[Any],
     llm_request: Any,
@@ -146,6 +203,7 @@ async def generate_with_failover(
         raise RuntimeError("没有可用的模型套餐")
 
     last_error: Optional[BaseException] = None
+    backends = order_profiles_for_attempt(list(backends))
     total = len(backends)
     for index, backend in enumerate(backends):
         request = llm_request
@@ -160,16 +218,30 @@ async def generate_with_failover(
             except Exception:
                 request = llm_request
 
-        yielded = False
+        buffered: list[Any] = []
+        emitted = False
         try:
             async for chunk in backend.generate_content_async(request, stream=stream):
-                yielded = True
-                yield chunk
+                if emitted:
+                    yield chunk
+                    continue
+                if _chunk_has_model_output(chunk):
+                    for item in buffered:
+                        yield item
+                    buffered.clear()
+                    emitted = True
+                    yield chunk
+                    continue
+                buffered.append(chunk)
+            for item in buffered:
+                yield item
             return
         except BaseException as exc:
             last_error = exc
             has_next = index + 1 < total
-            if yielded or not has_next or not is_llm_quota_or_rate_limit_error(exc):
+            if is_llm_quota_or_rate_limit_error(exc):
+                mark_profile_rate_limited(backend)
+            if emitted or not has_next or not is_llm_quota_or_rate_limit_error(exc):
                 raise
             next_backend = backends[index + 1]
             logger.warning(
@@ -267,6 +339,7 @@ async def chat(
     messages.append({"role": "user", "content": user_prompt})
 
     last_error: Optional[BaseException] = None
+    profiles = order_profiles_for_attempt(list(profiles))
     for index, profile in enumerate(profiles):
         try:
             response = await acompletion(
@@ -286,6 +359,8 @@ async def chat(
         except BaseException as exc:
             last_error = exc
             has_next = index + 1 < len(profiles)
+            if is_llm_quota_or_rate_limit_error(exc):
+                mark_profile_rate_limited(profile)
             if not has_next or not is_llm_quota_or_rate_limit_error(exc):
                 raise
             logger.warning(

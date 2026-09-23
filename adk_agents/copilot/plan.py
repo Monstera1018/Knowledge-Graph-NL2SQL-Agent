@@ -12,8 +12,12 @@ from adk_agents.copilot.helpers import (
     EXTRACTOR_TASK_CHITCHAT,
     EXTRACTOR_TASK_QUERY,
     EXTRACTOR_TASK_REPORT,
+    SNAPSHOT_GRAIN_AGGREGATED,
+    SNAPSHOT_GRAIN_NONE,
+    infer_snapshot_grain,
     normalize_extractor_task,
     resolve_extractor_task,
+    snapshot_is_truncated,
     user_requests_chart,
     user_requests_new_query,
     user_requests_report,
@@ -27,6 +31,7 @@ PLAN_STEP_STOP = "stop"
 
 MAX_CHART_PLAN_ATTEMPTS = 2
 MAX_REPORT_PLAN_ATTEMPTS = 2
+MAX_QUERY_STEPS_BEFORE_ANALYSIS = 2
 
 _STEP_MAPPING = {
     "query": PLAN_STEP_QUERY,
@@ -93,6 +98,69 @@ def _count_step(plan: dict[str, Any] | None, step: str) -> int:
     return count
 
 
+def plan_requests_chart(
+        user_message: str,
+        extraction: RetrievalExtractionResult,
+        previous_plan: dict[str, Any] | None = None,
+) -> bool:
+    """用户这轮是否要求出图：看原话、解析结果和上一轮规划留下的出图要求。"""
+    if user_requests_chart(user_message):
+        return True
+    if user_requests_chart(extraction.retrieval_query or ""):
+        return True
+    if normalize_extractor_task(extraction.task) == EXTRACTOR_TASK_CHART:
+        return True
+    for item in extraction.keywords or []:
+        if user_requests_chart(str(item)) or str(item).strip() in {"图表", "出图", "可视化"}:
+            return True
+    if isinstance(previous_plan, dict) and str(previous_plan.get("chart_request") or "").strip():
+        return True
+    return False
+
+
+def plan_requests_report(
+        user_message: str,
+        extraction: RetrievalExtractionResult,
+) -> bool:
+    if user_requests_report(user_message):
+        return True
+    if user_requests_report(extraction.retrieval_query or ""):
+        return True
+    return normalize_extractor_task(extraction.task) == EXTRACTOR_TASK_REPORT
+
+
+def snapshot_missing_chart_columns(observation: dict[str, Any] | None) -> bool:
+    """出图失败是否因为规划列不在当前结果里，需要补一次带维度的查询。"""
+    detail = str((observation or {}).get("detail") or "")
+    return any(
+        token in detail
+        for token in (
+            "不在当前结果中",
+            "缺少合适的分析维度",
+            "没有可绑定的图表定义",
+        )
+    )
+
+
+def can_rewrite_snapshot_grain(
+        *,
+        user_wants_chart: bool,
+        user_wants_report: bool,
+        observation: dict[str, Any] | None,
+        previous_plan: dict[str, Any] | None,
+) -> bool:
+    """出图/报告失败后，最多再查一次补维度。合计快照缺分类列时也要重查。"""
+    if not (user_wants_chart or user_wants_report):
+        return False
+    code = str((observation or {}).get("code") or "").strip()
+    if code not in {OBS_CHART_INFEASIBLE, OBS_REPORT_INFEASIBLE}:
+        return False
+    grain = str((observation or {}).get("snapshot_grain") or "").strip()
+    if grain == SNAPSHOT_GRAIN_NONE:
+        return False
+    return _count_step(previous_plan, PLAN_STEP_QUERY) < MAX_QUERY_STEPS_BEFORE_ANALYSIS
+
+
 def _parse_next(next_step: object, steps: object) -> str:
     parsed = _normalize_step(next_step)
     if parsed:
@@ -108,12 +176,8 @@ def _fallback_next(
         has_snapshot: bool,
         observation: dict[str, Any] | None,
 ) -> str:
-    user_wants_chart = user_requests_chart(user_message) or (
-        resolve_extractor_task(extraction, user_message) == EXTRACTOR_TASK_CHART
-    )
-    user_wants_report = user_requests_report(user_message) or (
-        resolve_extractor_task(extraction, user_message) == EXTRACTOR_TASK_REPORT
-    )
+    user_wants_chart = plan_requests_chart(user_message, extraction)
+    user_wants_report = plan_requests_report(user_message, extraction)
     wants_query = user_requests_new_query(user_message) or (
         resolve_extractor_task(extraction, user_message) == EXTRACTOR_TASK_QUERY
     )
@@ -176,8 +240,8 @@ def normalize_plan(
 ) -> dict[str, Any]:
     """只拦空转和未完成就停；具体走问数、出图还是出报告由模型根据观察判断。"""
     task = normalize_extractor_task(extraction.task)
-    user_wants_chart = user_requests_chart(user_message) or task == EXTRACTOR_TASK_CHART
-    user_wants_report = user_requests_report(user_message) or task == EXTRACTOR_TASK_REPORT
+    user_wants_chart = plan_requests_chart(user_message, extraction, previous_plan)
+    user_wants_report = plan_requests_report(user_message, extraction)
     parsed_next = _parse_next(next_step, steps)
     code = str((observation or {}).get("code") or "").strip()
     last_next = str((observation or {}).get("last_next") or "").strip()
@@ -208,6 +272,39 @@ def normalize_plan(
         )
 
     if parsed_next in {PLAN_STEP_CHART, PLAN_STEP_REPORT} and code == OBS_NO_SNAPSHOT:
+        parsed_next = PLAN_STEP_QUERY
+    allow_grain_rewrite = can_rewrite_snapshot_grain(
+        user_wants_chart=user_wants_chart,
+        user_wants_report=user_wants_report,
+        observation=observation,
+        previous_plan=previous_plan,
+    )
+    if parsed_next == PLAN_STEP_QUERY and code == OBS_QUERY_SUCCESS and not allow_grain_rewrite:
+        if user_wants_report:
+            parsed_next = PLAN_STEP_REPORT
+        elif user_wants_chart:
+            parsed_next = PLAN_STEP_CHART
+        else:
+            parsed_next = PLAN_STEP_STOP
+    if (
+        parsed_next == PLAN_STEP_QUERY
+        and code in {OBS_CHART_INFEASIBLE, OBS_REPORT_INFEASIBLE}
+        and not allow_grain_rewrite
+    ):
+        if has_snapshot and user_wants_report:
+            parsed_next = PLAN_STEP_REPORT
+        elif has_snapshot and user_wants_chart:
+            parsed_next = PLAN_STEP_CHART
+        elif has_snapshot:
+            parsed_next = PLAN_STEP_STOP
+    if (
+        code in {OBS_CHART_INFEASIBLE, OBS_REPORT_INFEASIBLE}
+        and allow_grain_rewrite
+        and (
+            snapshot_missing_chart_columns(observation)
+            or parsed_next in {PLAN_STEP_STOP, PLAN_STEP_CHITCHAT, PLAN_STEP_QUERY}
+        )
+    ):
         parsed_next = PLAN_STEP_QUERY
     if code in {OBS_NO_TABLES, OBS_VALIDATION_FAILED, OBS_QUERY_FAILED}:
         parsed_next = PLAN_STEP_STOP
@@ -273,6 +370,19 @@ def normalize_plan(
         }
     ):
         parsed_next = PLAN_STEP_REPORT
+    if code == OBS_QUERY_SUCCESS and parsed_next in {PLAN_STEP_STOP, PLAN_STEP_CHITCHAT}:
+        if user_wants_report:
+            parsed_next = PLAN_STEP_REPORT
+        elif user_wants_chart:
+            parsed_next = PLAN_STEP_CHART
+    if (
+        code == OBS_QUERY_SUCCESS
+        and parsed_next == PLAN_STEP_QUERY
+        and user_wants_chart
+        and not user_wants_report
+        and not allow_grain_rewrite
+    ):
+        parsed_next = PLAN_STEP_CHART
 
     previous_request = ""
     previous_decisions: list[dict[str, str]] = []
@@ -388,12 +498,19 @@ def format_planner_user_message(
             raw_columns = result_sets[0].get("columns")
             if isinstance(raw_columns, list):
                 columns = [str(col).strip() for col in raw_columns if str(col).strip()]
+        grain = str(snapshot.get("grain") or infer_snapshot_grain(snapshot) or "").strip()
+        grain_text = "已按维度汇总" if grain == SNAPSHOT_GRAIN_AGGREGATED else (
+            "无可用行" if grain == SNAPSHOT_GRAIN_NONE else "明细清单"
+        )
+        truncated_text = "是" if snapshot_is_truncated(snapshot) else "否"
         snapshot_lines = [
-            "有查询快照。列和粒度够用就可以直接出图或写报告；缺汇总指标、维度对不上、或用户还要当前结果画不出来的图，应重新 query。",
+            "有查询快照。清单/统计题有结果后应 stop。要图或报告时：列够就 chart/report；缺维度或只有合计对不上图时，再 query 一次写成带分类列的 GROUP BY。",
             f"- 上次问题：{question}",
             f"- 已选表：{table_text or '（无）'}",
             f"- 结果列：{'、'.join(columns) if columns else '（无）'}",
             f"- 行数：{snapshot.get('row_count') or 0}",
+            f"- 粒度：{grain_text}",
+            f"- 结果是否截断：{truncated_text}",
         ]
 
     chart_lines = ["无"]
@@ -429,6 +546,14 @@ def format_planner_user_message(
             f"- 说明：{observation.get('detail') or '（无）'}",
             f"- 当前有快照：{'是' if observation.get('has_snapshot') else '否'}",
         ]
+        grain = str(observation.get("snapshot_grain") or "").strip()
+        if grain:
+            grain_text = "已按维度汇总" if grain == SNAPSHOT_GRAIN_AGGREGATED else (
+                "无可用行" if grain == SNAPSHOT_GRAIN_NONE else "明细清单"
+            )
+            observation_lines.append(f"- 快照粒度：{grain_text}")
+        if observation.get("snapshot_truncated") is True:
+            observation_lines.append("- 快照已截断：是，图和报告中的数字仅基于返回行")
         columns = observation.get("snapshot_columns")
         if isinstance(columns, list) and columns:
             observation_lines.append(

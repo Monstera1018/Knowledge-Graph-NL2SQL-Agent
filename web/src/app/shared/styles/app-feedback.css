@@ -74,3 +74,18 @@
   border-radius: 0.75rem;
   overflow: hidden;
 }
+
+.app-sql-precipitate-dialog-panel .mat-mdc-dialog-container {
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow:
+    0 4px 6px rgb(15 23 42 / 0.04),
+    0 20px 48px rgb(15 23 42 / 0.12);
+}
+
+.app-sql-precipitate-dialog-panel .mat-mdc-dialog-surface {
+  border-radius: 0.75rem;
+  overflow: hidden;
+}

@@ -9,7 +9,8 @@ from tools.graph.internal import create_graph_node_tx, build_stable_table_uuid, 
     upsert_graph_edge_tx, _run_write, \
     build_stable_sql_uuid
 from tools.graph.model import NodeType, EdgeType, ConflictError, NotFoundError, PageResult, \
-    SQLNode, SQLSource, UseEdge, SQLRelation, normalize_sql_enabled, normalize_sql_source
+    SQLNode, SQLReviewStatus, SQLSource, UseEdge, SQLRelation, normalize_sql_enabled, \
+    normalize_sql_knowledge_extracted, normalize_sql_review_status, normalize_sql_source
 from tools.sql import find_all_sources
 from tools.sql_similarity import find_best_similar_sql, merge_sql_logic
 from tools.vector import delete_vector_records_by_node_uuids, upsert_vector_records
@@ -45,6 +46,15 @@ def _to_sql_node(data: dict[str, Any]) -> SQLNode:
     payload = dict(data or {})
     payload["source"] = normalize_sql_source(payload.get("source"))
     payload["enabled"] = normalize_sql_enabled(payload.get("enabled"))
+    payload["review_status"] = normalize_sql_review_status(
+        payload.get("review_status"),
+        source=payload.get("source"),
+        enabled=payload.get("enabled"),
+    )
+    payload["knowledge_extracted"] = normalize_sql_knowledge_extracted(
+        payload.get("knowledge_extracted"),
+        payload["review_status"],
+    )
     payload["created_at"] = str(payload.get("created_at") or "").strip()
     payload["updated_at"] = str(payload.get("updated_at") or "").strip()
     return SQLNode.model_validate(payload)
@@ -59,6 +69,8 @@ def _build_sql_node(
         dialect: str,
         source: SQLSource,
         enabled: bool,
+        review_status: SQLReviewStatus,
+        knowledge_extracted: bool,
         created_at: str = "",
         updated_at: str = "",
         uuid: str | None = None,
@@ -76,6 +88,8 @@ def _build_sql_node(
         workspace_id=workspace_id,
         source=source,
         enabled=enabled,
+        review_status=review_status,
+        knowledge_extracted=knowledge_extracted,
         created_at=created,
         updated_at=updated,
     )
@@ -199,11 +213,33 @@ async def create_sql(
         content: str = "",
         dialect: str = "",
         source: SQLSource | str = SQLSource.IMPORT,
-        enabled: bool = True,
+        enabled: bool | None = None,
+        review_status: SQLReviewStatus | str | None = None,
+        knowledge_extracted: bool | None = None,
 ) -> SQLNode:
     name = normalize_text(name)
     if not name:
         raise ValueError("SQL 名称不能为空")
+
+    source_value = normalize_sql_source(source)
+    if source_value == SQLSource.LLM:
+        status = (
+            SQLReviewStatus.PENDING
+            if review_status is None
+            else normalize_sql_review_status(review_status, source=source_value, enabled=False)
+        )
+        enabled_value = False if enabled is None else normalize_sql_enabled(enabled)
+        if status == SQLReviewStatus.PENDING:
+            enabled_value = False
+        extracted = False if knowledge_extracted is None else bool(knowledge_extracted)
+    else:
+        status = (
+            SQLReviewStatus.APPROVED
+            if review_status is None
+            else normalize_sql_review_status(review_status, source=source_value, enabled=enabled)
+        )
+        enabled_value = True if enabled is None else normalize_sql_enabled(enabled)
+        extracted = True if knowledge_extracted is None else bool(knowledge_extracted)
 
     node = _build_sql_node(
         workspace_id,
@@ -211,8 +247,10 @@ async def create_sql(
         logic=logic,
         content=content,
         dialect=dialect,
-        source=normalize_sql_source(source),
-        enabled=normalize_sql_enabled(enabled),
+        source=source_value,
+        enabled=enabled_value,
+        review_status=status,
+        knowledge_extracted=extracted,
     )
     sql_uuid = node.uuid
 
@@ -255,6 +293,7 @@ async def list_sqls(
         q: str | None = None,
         source: str | None = None,
         enabled: bool | None = None,
+        review_status: str | None = None,
         sort: str | None = None,
 ) -> PageResult[SQLNode]:
     page = max(page, 1)
@@ -264,6 +303,9 @@ async def list_sqls(
     source_filter = (source or "").strip().lower()
     if source_filter not in {"", SQLSource.IMPORT.value, SQLSource.LLM.value}:
         source_filter = ""
+    review_filter = (review_status or "").strip().lower()
+    if review_filter not in {"", SQLReviewStatus.PENDING.value, SQLReviewStatus.APPROVED.value}:
+        review_filter = ""
     sort_key = _normalize_sql_sort(sort)
     order_clause = _sql_list_order_clause(sort_key)
     enabled_filter = ""
@@ -286,6 +328,33 @@ async def list_sqls(
             OR ($enabled = 'true' AND coalesce(s.enabled, true) = true)
             OR ($enabled = 'false' AND coalesce(s.enabled, true) = false)
           )
+          AND (
+            $review_status = ''
+            OR (
+              $review_status = 'pending'
+              AND (
+                s.review_status = 'pending'
+                OR (
+                  s.review_status IS NULL
+                  AND s.source = 'llm'
+                  AND coalesce(s.enabled, true) = false
+                )
+              )
+            )
+            OR (
+              $review_status = 'approved'
+              AND (
+                s.review_status = 'approved'
+                OR (
+                  s.review_status IS NULL
+                  AND NOT (
+                    s.source = 'llm'
+                    AND coalesce(s.enabled, true) = false
+                  )
+                )
+              )
+            )
+          )
     """
 
     total_rows = await _run_read(
@@ -298,6 +367,7 @@ async def list_sqls(
         q=keyword,
         source=source_filter,
         enabled=enabled_filter,
+        review_status=review_filter,
     )
     total = int(total_rows[0]["total"]) if total_rows else 0
 
@@ -313,6 +383,7 @@ async def list_sqls(
         q=keyword,
         source=source_filter,
         enabled=enabled_filter,
+        review_status=review_filter,
         skip=skip,
         limit=page_size,
     )
@@ -337,6 +408,8 @@ async def update_sql(
         dialect: str | None = None,
         source: SQLSource | str | None = None,
         enabled: bool | None = None,
+        review_status: SQLReviewStatus | str | None = None,
+        knowledge_extracted: bool | None = None,
         preserve_uuid: bool = False,
 ) -> SQLNode:
     current = await get_sql(node_uuid)
@@ -346,7 +419,33 @@ async def update_sql(
     new_content = content if content is not None else current.content
     new_dialect = dialect if dialect is not None else current.dialect
     new_source = normalize_sql_source(source) if source is not None else current.source
-    new_enabled = normalize_sql_enabled(enabled) if enabled is not None else current.enabled
+    new_review = current.review_status
+    if review_status is not None:
+        requested = normalize_sql_review_status(
+            review_status,
+            source=new_source,
+            enabled=enabled if enabled is not None else current.enabled,
+        )
+        # 已审核不可退回待审核
+        if current.review_status == SQLReviewStatus.APPROVED and requested == SQLReviewStatus.PENDING:
+            new_review = SQLReviewStatus.APPROVED
+        else:
+            new_review = requested
+    elif enabled is not None and normalize_sql_enabled(enabled) and current.review_status == SQLReviewStatus.PENDING:
+        new_review = SQLReviewStatus.APPROVED
+    if new_review == SQLReviewStatus.PENDING:
+        new_enabled = False
+    elif current.review_status == SQLReviewStatus.PENDING and new_review == SQLReviewStatus.APPROVED:
+        new_enabled = True
+    elif enabled is not None:
+        new_enabled = normalize_sql_enabled(enabled)
+    else:
+        new_enabled = current.enabled
+    new_extracted = (
+        bool(knowledge_extracted)
+        if knowledge_extracted is not None
+        else current.knowledge_extracted
+    )
     now = utc_now_iso()
     created_at = (current.created_at or "").strip() or now
 
@@ -361,6 +460,8 @@ async def update_sql(
         dialect=new_dialect,
         source=new_source,
         enabled=new_enabled,
+        review_status=new_review,
+        knowledge_extracted=new_extracted,
         created_at=created_at,
         updated_at=now,
         uuid=node_uuid if preserve_uuid else None,
@@ -412,16 +513,18 @@ async def upsert_llm_generated_sql(
         logic: str,
         content: str,
         dialect: str,
-) -> SQLNode | None:
-    """把问数过程中校验并跑出数据的 SQL 沉淀为 LLM 生成样例。
+) -> tuple[SQLNode | None, str]:
+    """把 SQL 沉淀为 LLM 生成样例。
 
-    新样例默认关闭「用于 SQL 生成」，需在 SQL 页启用后才会进入召回。
-    已存在的人工导入条目不会被覆盖。
+    自动问数只在查出数据后调用；对话里也可由用户确认后调用。
+    新样例进入「待审核」，默认不写入向量。SQL 页审核通过后才启用，
+    并通过后抽取业务知识；不通过则删除。已存在的人工导入条目不会被覆盖。
+    返回 ``(节点, 动作)``，动作为 ``created`` / ``updated`` / ``merged`` / ``skipped`` / ``empty``。
     """
     name = normalize_text(question)
     sql_content = (content or "").strip()
     if not name or not sql_content:
-        return None
+        return None, "empty"
 
     table_and_columns, error = find_all_sources(sql_content, (dialect or "").strip().lower() or "mysql")
     if table_and_columns is None:
@@ -435,12 +538,14 @@ async def upsert_llm_generated_sql(
         existing = None
 
     if existing is not None and existing.source == SQLSource.IMPORT:
-        return existing
+        return existing, "skipped"
 
     enabled = existing.enabled if existing is not None else False
+    review_status = existing.review_status if existing is not None else SQLReviewStatus.PENDING
+    knowledge_extracted = existing.knowledge_extracted if existing is not None else False
     logic_text = normalize_text(logic) or (existing.logic if existing is not None else "")
     if existing is not None:
-        return await update_sql(
+        updated = await update_sql(
             workspace_id,
             existing.uuid,
             name=name,
@@ -449,8 +554,11 @@ async def upsert_llm_generated_sql(
             dialect=dialect,
             source=SQLSource.LLM,
             enabled=enabled,
+            review_status=review_status,
+            knowledge_extracted=knowledge_extracted,
             preserve_uuid=True,
         )
+        return updated, "updated"
 
     similar = find_best_similar_sql(
         name=name,
@@ -462,10 +570,10 @@ async def upsert_llm_generated_sql(
         match, score = similar
         if match.source == SQLSource.IMPORT:
             logger.info("跳过沉淀：与人工导入 SQL %s 相似 (score=%.3f)", match.uuid, score)
-            return match
+            return match, "skipped"
         merged_logic = merge_sql_logic(match.logic, logic_text)
         logger.info("合并相似 LLM SQL %s <- %s (score=%.3f)", match.uuid, name, score)
-        return await update_sql(
+        merged = await update_sql(
             workspace_id,
             match.uuid,
             name=match.name,
@@ -474,10 +582,13 @@ async def upsert_llm_generated_sql(
             dialect=dialect or match.dialect,
             source=SQLSource.LLM,
             enabled=match.enabled,
+            review_status=match.review_status,
+            knowledge_extracted=match.knowledge_extracted,
             preserve_uuid=True,
         )
+        return merged, "merged"
 
-    return await create_sql(
+    created = await create_sql(
         workspace_id,
         name=name,
         logic=logic_text,
@@ -485,7 +596,10 @@ async def upsert_llm_generated_sql(
         dialect=dialect,
         source=SQLSource.LLM,
         enabled=False,
+        review_status=SQLReviewStatus.PENDING,
+        knowledge_extracted=False,
     )
+    return created, "created"
 
 
 async def delete_sql(node_uuid: str) -> None:

@@ -159,8 +159,8 @@
               </div>
             </section>
           } @else {
-            @for (msg of messages(); track msg.id) {
-              <app-chat-message [message]="msg" />
+            @for (msg of messages(); track msg.id; let index = $index) {
+              <app-chat-message [message]="msg" [question]="questionBefore(index)" />
             }
           }
           <div class="chat-thread__bottom" #threadBottom aria-hidden="true"></div>

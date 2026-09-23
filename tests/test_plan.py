@@ -1,6 +1,7 @@
 import unittest
 
 from adk_agents.common import RetrievalExtractionResult
+from adk_agents.copilot.helpers import infer_snapshot_grain
 from adk_agents.copilot.plan import (
     OBS_CHART_INFEASIBLE,
     OBS_NO_SNAPSHOT,
@@ -266,7 +267,7 @@ class PlanNormalizeTest(unittest.TestCase):
         )
         self.assertEqual(plan["next"], PLAN_STEP_QUERY)
 
-    def test_query_success_allows_model_to_query_again(self):
+    def test_query_success_with_chart_request_goes_to_chart(self):
         first = normalize_plan(
             next_step="query",
             extraction=_extraction(task="query"),
@@ -282,8 +283,157 @@ class PlanNormalizeTest(unittest.TestCase):
                 "last_next": PLAN_STEP_QUERY,
                 "status": "success",
                 "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
             },
             previous_plan=first,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_CHART)
+
+    def test_query_and_chart_does_not_stop_after_data(self):
+        message = "输出业扩工单流程数据中的有效工单数据,并生成分析图表"
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=False,
+        )
+        self.assertEqual(first["next"], PLAN_STEP_QUERY)
+        plan = normalize_plan(
+            next_step="stop",
+            extraction=_extraction(task="query"),
+            user_message=message,
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+            },
+            previous_plan=first,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_CHART)
+
+    def test_query_success_stops_for_list_question(self):
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(),
+            user_message="输出业扩工单流程数据中的有效工单数据",
+            has_snapshot=False,
+        )
+        plan = normalize_plan(
+            next_step="query",
+            extraction=_extraction(),
+            user_message="输出业扩工单流程数据中的有效工单数据",
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+            },
+            previous_plan=first,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_STOP)
+
+    def test_query_success_aggregated_snapshot_goes_to_chart(self):
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query"),
+            user_message="帮我查询各地区用户数并画柱状图",
+            has_snapshot=False,
+        )
+        plan = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query"),
+            user_message="帮我查询各地区用户数并画柱状图",
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "aggregated",
+            },
+            previous_plan=first,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_CHART)
+
+    def test_chart_infeasible_aggregated_missing_columns_requeries(self):
+        message = "输出业扩工单流程数据中的有效工单数据,并生成分析图表"
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=False,
+        )
+        charted = normalize_plan(
+            next_step="chart",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "aggregated",
+            },
+            previous_plan=first,
+        )
+        plan = normalize_plan(
+            next_step="chart",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_CHART,
+                "status": "failed",
+                "code": OBS_CHART_INFEASIBLE,
+                "has_snapshot": True,
+                "snapshot_grain": "aggregated",
+                "detail": "维度列「工单类型」不在当前结果中。可用列：有效工单数量。",
+            },
+            previous_plan=charted,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_QUERY)
+
+    def test_chart_infeasible_on_detail_allows_one_rewrite(self):
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query"),
+            user_message="帮我查询各地区用户数并画柱状图",
+            has_snapshot=False,
+        )
+        charted = normalize_plan(
+            next_step="chart",
+            extraction=_extraction(task="query"),
+            user_message="帮我查询各地区用户数并画柱状图",
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+            },
+            previous_plan=first,
+        )
+        plan = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query"),
+            user_message="帮我查询各地区用户数并画柱状图",
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_CHART,
+                "status": "failed",
+                "code": OBS_CHART_INFEASIBLE,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+            },
+            previous_plan=charted,
         )
         self.assertEqual(plan["next"], PLAN_STEP_QUERY)
 
@@ -297,6 +447,34 @@ class PlanNormalizeTest(unittest.TestCase):
         self.assertEqual(plan["next"], PLAN_STEP_CHART)
 
 
+class SnapshotGrainTest(unittest.TestCase):
+    def test_grouped_sql_is_aggregated(self):
+        snapshot = {
+            "result_sets": [{
+                "columns": ["地区", "户数"],
+                "rows": [{"地区": "杭州", "户数": "10"}, {"地区": "宁波", "户数": "8"}],
+            }],
+            "sql": "SELECT city_zj AS 地区, COUNT(*) AS 户数 FROM t GROUP BY city_zj",
+            "dialect": "sqlite",
+        }
+        self.assertEqual(infer_snapshot_grain(snapshot), "aggregated")
+
+    def test_work_order_list_is_detail(self):
+        rows = [
+            {"工单编号": f"WO{index:03d}", "工单状态": "在途" if index % 2 else "归档"}
+            for index in range(12)
+        ]
+        snapshot = {
+            "result_sets": [{
+                "columns": ["工单编号", "工单状态"],
+                "rows": rows,
+            }],
+            "sql": "SELECT wk_order_no, wk_order_stat FROM dws_cst_ykgdlcxxb_rhb_xs",
+            "dialect": "sqlite",
+        }
+        self.assertEqual(infer_snapshot_grain(snapshot), "detail")
+
+
 class WorkflowGraphTest(unittest.TestCase):
     def test_root_agent_graph_accepts_planner_loop(self):
         from adk_agents.copilot.agent import root_agent
@@ -307,9 +485,11 @@ class WorkflowGraphTest(unittest.TestCase):
         self.assertIn("observe_query_result", names)
         self.assertIn("observe_no_snapshot", names)
         self.assertIn("prepare_report_planner_input", names)
+        self.assertIn("prepare_sql_generator_input", names)
         self.assertIn("report_planner", names)
         self.assertIn("end_plan", names)
         self.assertNotIn("route_after_execute", names)
+        self.assertNotIn("inspect_query_result", names)
         self.assertNotIn("format_no_chart_snapshot_response", names)
 
 

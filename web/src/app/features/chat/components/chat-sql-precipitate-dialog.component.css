@@ -1,0 +1,67 @@
+.sql-precipitate {
+  padding: 1.375rem 1.375rem 1.25rem;
+}
+
+.sql-precipitate__title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+  color: #0f172a;
+}
+
+.sql-precipitate__hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.45rem;
+  color: #64748b;
+}
+
+.sql-precipitate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.9rem;
+  font-size: 0.8125rem;
+  color: #334155;
+}
+
+.sql-precipitate__field input,
+.sql-precipitate__field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+  resize: vertical;
+}
+
+.sql-precipitate__sql {
+  font-family: var(--app-font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.sql-precipitate__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #f1f5f9;
+}
+
+.sql-precipitate__submit {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
+.sql-precipitate__submit:hover:not(:disabled) {
+  background: #1e293b;
+  border-color: #1e293b;
+  color: #fff;
+}

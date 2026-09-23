@@ -20,7 +20,7 @@ import { EmptyStateComponent } from '../../shared/components/empty-state.compone
 import { GraphSnapshotComponent } from '../../shared/components/graph-snapshot/graph-snapshot.component';
 import { SqlHighlightComponent } from '../../shared/components/sql-highlight/sql-highlight.component';
 import { AppTruncateTooltipDirective } from '../../shared/directives/truncate-tooltip.directive';
-import { SqlFormDraft, SqlFormMode, emptySqlForm, sqlIsEnabled, sqlSourceLabel, sqlTimeLabel, sqlToDraft } from './sql.models';
+import { SqlFormDraft, SqlFormMode, emptySqlForm, sqlIsEnabled, sqlIsPending, sqlReviewLabel, sqlSourceLabel, sqlTimeLabel, sqlToDraft } from './sql.models';
 
 type SqlDetailView = 'detail' | 'graph';
 
@@ -64,8 +64,9 @@ export class SqlPage {
   protected readonly graphFocusUuid = signal<string | null>(null);
 
   protected readonly togglingUuid = signal<string | null>(null);
+  protected readonly reviewingUuid = signal<string | null>(null);
   protected readonly sourceFilter = signal('');
-  protected readonly enabledFilter = signal('');
+  protected readonly statusFilter = signal('');
   protected readonly sort = signal('time_desc');
 
   protected readonly relationStats = computed(() => {
@@ -135,8 +136,8 @@ export class SqlPage {
     this.fetchItems();
   }
 
-  protected onEnabledFilterChange(value: string): void {
-    this.enabledFilter.set(value);
+  protected onStatusFilterChange(value: string): void {
+    this.statusFilter.set(value);
     this.fetchItems();
   }
 
@@ -312,6 +313,14 @@ export class SqlPage {
     return sqlIsEnabled(item);
   }
 
+  protected isPending(item: SQLNode | null): boolean {
+    return sqlIsPending(item);
+  }
+
+  protected reviewLabel(item: SQLNode | null): string {
+    return sqlReviewLabel(item);
+  }
+
   protected timeLabel(item: SQLNode | null): string {
     return sqlTimeLabel(item);
   }
@@ -319,7 +328,7 @@ export class SqlPage {
   protected toggleEnabled(event: Event, item: SQLNode): void {
     event.preventDefault();
     event.stopPropagation();
-    if (this.togglingUuid() === item.uuid) {
+    if (sqlIsPending(item) || this.togglingUuid() === item.uuid) {
       return;
     }
     const nextEnabled = !sqlIsEnabled(item);
@@ -330,12 +339,7 @@ export class SqlPage {
       .subscribe({
         next: (saved) => {
           this.togglingUuid.set(null);
-          this.items.update((items) =>
-            items.map((row) => (row.uuid === saved.uuid ? { ...row, ...saved } : row)),
-          );
-          if (this.selected()?.uuid === saved.uuid) {
-            this.selected.update((current) => (current ? { ...current, ...saved } : saved));
-          }
+          this.applySavedSql(saved);
           this.snack.success(nextEnabled ? '已启用，将用于 SQL 生成' : '已停用，不再用于 SQL 生成');
         },
         error: (err) => {
@@ -343,6 +347,89 @@ export class SqlPage {
           this.handleError('更新启用状态失败', err);
         },
       });
+  }
+
+  protected async approveItem(event: Event, item: SQLNode): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!sqlIsPending(item) || this.reviewingUuid() === item.uuid) {
+      return;
+    }
+    const confirmed = await this.confirmDialog.confirm({
+      title: '审核通过',
+      message: `通过「${item.name}」后将启用该样例，并抽取待复核的业务知识。反复启用/停用不会再次抽取。`,
+      confirmLabel: '通过',
+    });
+    if (!confirmed) {
+      return;
+    }
+    this.reviewingUuid.set(item.uuid);
+    this.api
+      .updateSql(item.uuid, { review_status: 'approved' })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.reviewingUuid.set(null);
+          this.fetchItems(this.query());
+          if (this.selected()?.uuid === saved.uuid) {
+            this.selected.update((current) => (current ? { ...current, ...saved } : saved));
+          }
+          this.snack.success('已通过并启用。抽取的业务知识默认停用，请到知识页复核后再启用。');
+        },
+        error: (err) => {
+          this.reviewingUuid.set(null);
+          this.handleError('审核通过失败', err);
+        },
+      });
+  }
+
+  protected async rejectItem(event: Event, item: SQLNode): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!sqlIsPending(item) || this.reviewingUuid() === item.uuid) {
+      return;
+    }
+    const confirmed = await this.confirmDialog.confirm({
+      title: '审核不通过',
+      message: `不通过将删除待审核样例「${item.name}」，不可恢复。`,
+      confirmLabel: '删除',
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    this.reviewingUuid.set(item.uuid);
+    this.api
+      .deleteSql(item.uuid)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.reviewingUuid.set(null);
+          if (this.selected()?.uuid === item.uuid) {
+            this.selected.set(null);
+            this.relations.set([]);
+            this.formMode.set('view');
+            this.formDraft.set(emptySqlForm());
+            this.detailView.set('detail');
+            this.graphSnapshot.set(null);
+          }
+          this.fetchItems(this.query());
+          this.snack.success('已删除未通过的 SQL 样例');
+        },
+        error: (err) => {
+          this.reviewingUuid.set(null);
+          this.handleError('删除失败', err);
+        },
+      });
+  }
+
+  private applySavedSql(saved: SQLNode): void {
+    this.items.update((items) =>
+      items.map((row) => (row.uuid === saved.uuid ? { ...row, ...saved } : row)),
+    );
+    if (this.selected()?.uuid === saved.uuid) {
+      this.selected.update((current) => (current ? { ...current, ...saved } : saved));
+    }
   }
 
   protected patchFormField(field: keyof SqlFormDraft, value: string): void {
@@ -454,11 +541,12 @@ export class SqlPage {
   }
 
   private buildListQuery(q = this.query()) {
-    const enabledFilter = this.enabledFilter();
+    const status = this.statusFilter();
     return listAllQuery({
       q: q.trim() || undefined,
       source: this.sourceFilter() || undefined,
-      enabled: enabledFilter === '' ? undefined : enabledFilter,
+      enabled: status === 'enabled' ? true : status === 'disabled' ? false : undefined,
+      review_status: status === 'pending' ? 'pending' : status === 'disabled' ? 'approved' : undefined,
       sort: this.sort() || 'time_desc',
     });
   }

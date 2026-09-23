@@ -134,6 +134,13 @@ app-chat-markdown {
   text-transform: uppercase;
 }
 
+.chat-code-block__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin-left: auto;
+}
+
 .chat-code-block__copy {
   display: flex;
   align-items: center;

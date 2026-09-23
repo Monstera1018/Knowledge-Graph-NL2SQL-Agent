@@ -26,37 +26,94 @@ PALETTE_PRESETS: dict[str, list[str]] = {
 }
 
 
+def _relax_json_text(text: str) -> str:
+    """尽量修好模型常见的非法 JSON：中文引号、尾逗号、字符串里未转义换行。"""
+    cleaned = (text or "").replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+    cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+    out: list[str] = []
+    in_string = False
+    escape = False
+    for char in cleaned:
+        if in_string:
+            if escape:
+                out.append(char)
+                escape = False
+                continue
+            if char == "\\":
+                out.append(char)
+                escape = True
+                continue
+            if char == '"':
+                in_string = False
+                out.append(char)
+                continue
+            if char == "\n":
+                out.append("\\n")
+                continue
+            if char == "\r":
+                continue
+            out.append(char)
+            continue
+        if char == '"':
+            in_string = True
+        out.append(char)
+    return "".join(out)
+
+
 def parse_json_objects(text: str) -> list[dict[str, Any]]:
     cleaned = (text or "").strip()
     if "```" in cleaned:
         cleaned = re.sub(r"```(?:json)?\s*", "", cleaned).strip().rstrip("`").strip()
+    candidates = [cleaned]
+    relaxed = _relax_json_text(cleaned)
+    if relaxed != cleaned:
+        candidates.append(relaxed)
 
     decoder = json.JSONDecoder()
-    objects: list[dict[str, Any]] = []
-    cursor = 0
-    while cursor < len(cleaned):
-        start = cleaned.find("{", cursor)
+    # 先从第一个 { 解完整对象，避免把 analyses/charts 里的小对象当成整份方案。
+    for source in candidates:
+        start = source.find("{")
         if start < 0:
+            continue
+        try:
+            value, _ = decoder.raw_decode(source[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, list):
+            found = [item for item in value if isinstance(item, dict)]
+            if found:
+                return found
+
+    objects: list[dict[str, Any]] = []
+    for source in candidates:
+        cursor = 0
+        while cursor < len(source):
+            start = source.find("{", cursor)
+            if start < 0:
+                break
+            try:
+                value, end = decoder.raw_decode(source[start:])
+            except json.JSONDecodeError:
+                cursor = start + 1
+                continue
+            if isinstance(value, dict):
+                objects.append(value)
+            cursor = start + end
+        if objects:
+            return objects
+
+    for source in candidates:
+        for match in _JSON_OBJECT_RE.finditer(source):
+            try:
+                value = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                objects.append(value)
+        if objects:
             break
-        try:
-            value, end = decoder.raw_decode(cleaned[start:])
-        except json.JSONDecodeError:
-            cursor = start + 1
-            continue
-        if isinstance(value, dict):
-            objects.append(value)
-        cursor = start + end
-
-    if objects:
-        return objects
-
-    for match in _JSON_OBJECT_RE.finditer(cleaned):
-        try:
-            value = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            objects.append(value)
     return objects
 
 
@@ -78,12 +135,18 @@ def parse_number(value: object) -> float | None:
         return None
 
 
-def _empty_chart_spec(summary: str, *, source_row_count: int = 0) -> dict[str, Any]:
+def _empty_chart_spec(
+        summary: str,
+        *,
+        source_row_count: int = 0,
+        source_truncated: bool = False,
+) -> dict[str, Any]:
     return {
         "kind": "chart_spec",
         "feasible": False,
         "summary": summary,
         "source_row_count": source_row_count,
+        "source_truncated": source_truncated,
         "charts": [],
     }
 
@@ -320,10 +383,21 @@ def format_chart_planner_user_message(
     )
     schema_context = str(snapshot.get("schema_context") or "").strip() or "（无）"
     result_text = format_snapshot_result_overview(snapshot)
+    allowed_columns: list[str] = []
+    sets = _snapshot_sets(snapshot)
+    if sets:
+        allowed_columns = [str(item).strip() for item in sets[0].get("columns") or [] if str(item).strip()]
+    allowed_text = "、".join(f"`{name}`" for name in allowed_columns) if allowed_columns else "（无）"
     return "\n".join([
         "## 用户出图要求",
         "",
         (user_request or "").strip() or "（无）",
+        "",
+        "## 本轮允许绑定的结果列",
+        "",
+        allowed_text,
+        "",
+        "只能用上面这些列名。表结构里有、但这里没有的字段不能作为图表维度或指标。",
         "",
         "## 上一轮用户问题",
         "",
@@ -485,6 +559,13 @@ def infer_fallback_chart_plan(heading: str, snapshot: dict[str, Any] | None) -> 
     }
 
 
+def _chart_source_note(note: str, *, row_count: int, truncated: bool) -> str:
+    text = (note or "").strip() or f"基于当前返回的 {row_count} 行"
+    if truncated and "截断" not in text:
+        text = f"{text}；结果已截断，图中数字仅基于这些返回行"
+    return text
+
+
 def _cell(row: dict[str, Any], column: str) -> str:
     return str(row.get(column) or "").strip()
 
@@ -567,10 +648,15 @@ def materialize_chart_spec(
 ) -> dict[str, Any]:
     sets = _snapshot_sets(snapshot)
     source_row_count = sum(len(item["rows"]) for item in sets)
+    source_truncated = bool((snapshot or {}).get("truncated")) or any(
+        isinstance(item, dict) and item.get("truncated") is True
+        for item in ((snapshot or {}).get("result_sets") or [])
+    )
     if not sets:
         return _empty_chart_spec(
             "当前没有可分析的查询结果，请先完成一次问数。",
             source_row_count=source_row_count,
+            source_truncated=source_truncated,
         )
 
     parsed_objects = parse_json_objects(raw_text)
@@ -579,6 +665,7 @@ def materialize_chart_spec(
         return _empty_chart_spec(
             "未能理解图表方案，请再说明想按哪个维度看。",
             source_row_count=source_row_count,
+            source_truncated=source_truncated,
         )
 
     result = sets[0]
@@ -587,6 +674,7 @@ def materialize_chart_spec(
         return _empty_chart_spec(
             "当前查询结果没有可绘图的数据行。",
             source_row_count=source_row_count,
+            source_truncated=source_truncated,
         )
 
     feasible = plan.get("feasible") is not False
@@ -594,7 +682,11 @@ def materialize_chart_spec(
     raw_charts = plan.get("charts")
     if feasible is False:
         reason = summary or "图表规划认为当前结果不适合出图。"
-        return _empty_chart_spec(reason, source_row_count=source_row_count)
+        return _empty_chart_spec(
+            reason,
+            source_row_count=source_row_count,
+            source_truncated=source_truncated,
+        )
 
     charts: list[dict[str, Any]] = []
     failures: list[str] = []
@@ -655,7 +747,7 @@ def materialize_chart_spec(
             materialized = _aggregate_chart(
                 chart_type=chart_type,
                 title=title,
-                note=note or f"基于当前返回的 {len(rows)} 行",
+                note=_chart_source_note(note, row_count=len(rows), truncated=source_truncated),
                 x_column=x_column,
                 metrics=metrics,
                 rows=rows,
@@ -669,7 +761,11 @@ def materialize_chart_spec(
         reason = " ".join(failures) if failures else (
             f"当前结果缺少合适的分析维度。可用列：{available}。"
         )
-        return _empty_chart_spec(reason, source_row_count=source_row_count)
+        return _empty_chart_spec(
+            reason,
+            source_row_count=source_row_count,
+            source_truncated=source_truncated,
+        )
 
     previous_palette = None
     if last_chart and isinstance(last_chart.get("charts"), list):
@@ -692,6 +788,7 @@ def materialize_chart_spec(
         "feasible": True,
         "summary": summary or "已根据当前查询结果生成图表。",
         "source_row_count": source_row_count,
+        "source_truncated": source_truncated,
         "palette": list(palette),
         "charts": charts,
     }

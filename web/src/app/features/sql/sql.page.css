@@ -104,10 +104,14 @@
 }
 
 .sql-item-enable {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
   margin-top: 0.375rem;
 }
 
-.sql-source-badge {
+.sql-source-badge,
+.sql-review-badge {
   flex-shrink: 0;
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
@@ -120,6 +124,11 @@
 .sql-source-badge--llm {
   background: #f5f3ff;
   color: #6d28d9;
+}
+
+.sql-review-badge--pending {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .sql-pane-filters {

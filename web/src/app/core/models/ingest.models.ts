@@ -36,7 +36,7 @@ export const IMPORT_STAGE_OPTIONS: ImportStageOption[] = [
   {
     value: 'IMPORT_SQL',
     label: '历史 SQL',
-    hint: 'SQL 名称、逻辑、内容与方言',
+    hint: 'SQL 名称、逻辑、内容与语法',
     icon: 'code',
   },
   {

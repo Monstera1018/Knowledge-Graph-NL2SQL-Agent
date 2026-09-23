@@ -85,7 +85,7 @@ def _require_safe_sql_ident(name: str, *, kind: str) -> str:
 
 
 def get_sql_read_dialect() -> str:
-    """大模型生成 SQL 和 sqlglot 校验使用的 SQL 方言。
+    """大模型生成 SQL 和 sqlglot 校验使用的 SQL 语法。
 
     ``SQL_READ_DIALECT`` 会覆盖基于 ``DATABASE_BACKEND`` 的自动判断。
     """
@@ -105,8 +105,8 @@ def prepare_sql_for_physical_db(
 ) -> str:
     """访问已配置的物理数据库前，按需适配 SQL。
 
-    当读取方言与物理后端不一致时，例如使用旧 MySQL SQL 访问 SQLite，
-    在 EXPLAIN/执行前先转换方言。
+    当读取语法与物理后端不一致时，例如使用旧 MySQL SQL 访问 SQLite，
+    在 EXPLAIN/执行前先转换语法。
     """
 
     statement = (sql or "").strip()
@@ -124,9 +124,9 @@ def prepare_sql_for_physical_db(
     try:
         converted = transpile(statement, read=source, write="sqlite")
     except Exception as exc:
-        raise ValueError(f"无法将 SQL 转换为 SQLite 方言：{exc}") from exc
+        raise ValueError(f"无法将 SQL 转换为 SQLite 语法：{exc}") from exc
     if not converted:
-        raise ValueError("无法将 SQL 转换为 SQLite 方言")
+        raise ValueError("无法将 SQL 转换为 SQLite 语法")
     return str(converted[0]).strip()
 
 
@@ -347,7 +347,7 @@ async def explain_read_sql_statements(
 
 
 def _quote_sql_identifier(name: str, dialect: str) -> str:
-    """按指定方言返回安全引用后的 SQL 标识符。"""
+    """按指定语法返回安全引用后的 SQL 标识符。"""
     if dialect == "sqlite":
         return '"' + name.replace('"', '""') + '"'
     return "`" + name.replace("`", "``") + "`"

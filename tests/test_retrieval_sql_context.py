@@ -3,10 +3,12 @@ import unittest
 from tools.retrieval import (
     RetrievalGraphBundle,
     SqlEntry,
+    filter_sql_entries_by_tables,
     format_graph_context_for_llm,
     format_sql_generation_context,
     merge_sql_entries,
     parse_sql_reference_samples,
+    sql_entry_involves_tables,
 )
 from server.chat.service import _extract_context_sections
 
@@ -111,6 +113,69 @@ class SqlReferenceContextTest(unittest.TestCase):
         self.assertIn("不要把样例中用户未提到的剔除规则", text)
         self.assertIn("**用户问题**", text)
         self.assertIn("剔除定量定比、分表计量和分户计量用户", text)
+
+    def test_sql_entry_involves_selected_tables_by_related_or_sql(self) -> None:
+        related_hit = SqlEntry(
+            uuid="h1",
+            name="命中关联表",
+            logic="用电清单",
+            content="SELECT 1",
+            related_tables=["dws_cst_jldxxb_rhb_gw.prc_code"],
+            from_hit=True,
+        )
+        sql_hit = SqlEntry(
+            uuid="h2",
+            name="正文含表",
+            logic="未结清",
+            content="SELECT cust_no FROM dws_fee WHERE status = '未结清'",
+            from_hit=True,
+        )
+        unrelated = SqlEntry(
+            uuid="h3",
+            name="无关样例",
+            logic="其他主题",
+            content="SELECT 1 FROM other_table",
+            related_tables=["other_table.status"],
+            from_hit=True,
+        )
+        selected = ["dws_cst_jldxxb_rhb_gw", "dws_fee"]
+        self.assertTrue(sql_entry_involves_tables(related_hit, selected))
+        self.assertTrue(sql_entry_involves_tables(sql_hit, selected))
+        self.assertFalse(sql_entry_involves_tables(unrelated, selected))
+
+    def test_filter_sql_entries_drops_unrelated_before_merge(self) -> None:
+        hits = [
+            SqlEntry(
+                uuid="h1",
+                name="无关命中",
+                logic="a",
+                content="SELECT 1 FROM other_table",
+                related_tables=["other_table.col"],
+                from_hit=True,
+            ),
+            SqlEntry(
+                uuid="h2",
+                name="相关命中",
+                logic="b",
+                content="SELECT 1 FROM dws_fee",
+                related_tables=["dws_fee.status"],
+                from_hit=True,
+            ),
+        ]
+        graph = [
+            SqlEntry(
+                uuid="g1",
+                name="图谱补全",
+                logic="c",
+                content="SELECT 1 FROM dws_fee JOIN dws_cst",
+                related_tables=["dws_fee.status", "dws_cst.cust_no"],
+            ),
+        ]
+        selected = ["dws_fee"]
+        filtered_hits = filter_sql_entries_by_tables(hits, selected)
+        merged = merge_sql_entries(filtered_hits, graph, limit=2)
+        self.assertEqual([item.uuid for item in merged], ["h2", "g1"])
+        self.assertNotIn("h1", [item.uuid for item in merged])
 
 
 if __name__ == "__main__":

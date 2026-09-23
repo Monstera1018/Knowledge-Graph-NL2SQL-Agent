@@ -473,6 +473,16 @@ export class ChatToolPartComponent {
       || /[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*/.test(text);
   }
 
+  private toolAttempt(): number {
+    const input = this.part().input;
+    if (!input || typeof input !== 'object') {
+      return 0;
+    }
+    const raw = input['attempt'];
+    const attempt = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(attempt) && attempt > 0 ? attempt : 0;
+  }
+
   private callSummary(): string {
     if (this.part().name === 'extractor') {
       return '正在识别问题中的地区、对象、指标和查询意图。';
@@ -484,10 +494,14 @@ export class ChatToolPartComponent {
       return '正在检索与问题相关的数据表、字段、枚举值、业务知识、历史 SQL 和表关系。';
     }
     if (this.part().name === 'table_context') {
-      return '正在确定最终使用的数据表，并整理生成 SQL 所需的字段、枚举、表关系和业务知识。';
+      return this.toolAttempt() > 0
+        ? '正在根据上次失败原因补表或换表，并重新整理表结构。'
+        : '正在确定最终使用的数据表，并整理生成 SQL 所需的字段、枚举、表关系和业务知识。';
     }
     if (this.part().name === 'table_selector') {
-      return '正在根据检索到的表、字段、枚举值、业务知识和表关系判断应该使用哪些数据表。';
+      return this.toolAttempt() > 0
+        ? '正在根据上次失败原因重新选择数据表。'
+        : '正在根据检索到的表、字段、枚举值、业务知识和表关系判断应该使用哪些数据表。';
     }
     if (this.part().name === 'route_after_table_selection') {
       return '正在确认选表结果是否可以进入 SQL 生成。';
@@ -499,7 +513,9 @@ export class ChatToolPartComponent {
       return '正在汇总已选表的字段清单、字段含义和表之间的关联关系。';
     }
     if (this.part().name === 'sql_generator') {
-      return '正在根据已选表结构和业务规则生成查询 SQL。';
+      return this.toolAttempt() > 0
+        ? '正在根据上次校验意见改写 SQL，请稍候。'
+        : '正在根据已选表结构和业务规则生成查询 SQL。';
     }
     if (this.part().name === 'validate_sql') {
       return '正在检查 SQL 是否只读、安全，表名和字段是否存在。';

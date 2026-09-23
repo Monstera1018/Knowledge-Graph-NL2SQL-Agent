@@ -73,6 +73,7 @@ _TEXT_STREAM_STAGES = frozenset({
     "format_no_table_response",
 })
 _BUFFERED_TEXT_STAGES = frozenset({"sql_generator"})
+_SSE_HEARTBEAT_SECONDS = 12.0
 
 _WORKFLOW_DISPLAY_GROUPS = [
     ("extractor", "🧭 解析问题", ("extractor",)),
@@ -826,13 +827,78 @@ def _build_workflow_detail(active_stage: str, done_stages: set[str]) -> str:
     return "\n".join(lines)
 
 
-def _user_facing_runtime_error(exc: BaseException) -> str:
-    if is_llm_quota_or_rate_limit_error(exc):
+_CHART_STAGES = frozenset({
+    "prepare_chart_planner_input",
+    "chart_planner",
+    "parse_chart_spec",
+    "format_no_chart_snapshot_response",
+})
+_REPORT_STAGES = frozenset({
+    "prepare_report_planner_input",
+    "report_planner",
+    "parse_report_spec",
+})
+
+
+def _user_facing_runtime_error(
+        exc: BaseException,
+        *,
+        stage: str = "",
+        sql_result_emitted: bool = False,
+) -> str:
+    if not is_llm_quota_or_rate_limit_error(exc):
+        return str(exc)
+
+    current = (stage or "").strip()
+    if current in _REPORT_STAGES:
         return (
-            "模型接口触发了限流保护，刚才的查询结果仍然可用。"
-            "请稍等片刻后再发送「生成分析报告」，不必重新取数。"
+            "模型接口触发了限流保护，分析报告还没生成完。"
+            "刚才的查询结果还在，请稍等片刻后再发送「生成分析报告」，不必重新取数。"
         )
-    return str(exc)
+    if current in _CHART_STAGES:
+        return (
+            "模型接口触发了限流保护，分析图表还没生成完。"
+            "刚才的查询结果还在，请稍等片刻后再试出图，不必重新取数。"
+        )
+    if current == "chitchat":
+        return "模型接口触发了限流保护，请稍等片刻后再试。"
+    if sql_result_emitted:
+        return (
+            "模型接口触发了限流保护，请稍等片刻后再试。"
+            "刚才的查询结果仍然可用。"
+        )
+    return (
+        "模型接口触发了限流保护，这次问数还没完成。"
+        "请稍等片刻后重新发送这个问题。"
+    )
+
+
+async def iter_runtime_events_with_heartbeat(
+        events: AsyncIterator[Any],
+        *,
+        idle_seconds: float = _SSE_HEARTBEAT_SECONDS,
+) -> AsyncIterator[Any | None]:
+    """ADK 长时间不吐事件时插入心跳，避免 SSE/代理把连接当成卡死。"""
+    aiter = events.__aiter__()
+    pending = asyncio.create_task(aiter.__anext__())
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=max(float(idle_seconds), 0.01))
+            if not done:
+                yield None
+                continue
+            try:
+                yield pending.result()
+            except StopAsyncIteration:
+                return
+            pending = asyncio.create_task(aiter.__anext__())
+    finally:
+        if not pending.done():
+            pending.cancel()
+            try:
+                await pending
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
 
 
 class ChatService:
@@ -1297,13 +1363,27 @@ class ChatService:
                     part_id=data_id,
                 ))
 
+        workflow_detail = ""
         try:
-            async for event in self._copilot_runtime.stream(
-                user_id=user_id,
-                session_id=session_id,
-                message=content,
-                workspace_id=workspace_id,
+            async for event in iter_runtime_events_with_heartbeat(
+                self._copilot_runtime.stream(
+                    user_id=user_id,
+                    session_id=session_id,
+                    message=content,
+                    workspace_id=workspace_id,
+                )
             ):
+                if event is None:
+                    yield ": ping\n\n"
+                    if workflow_part_id:
+                        yield sse_line(StreamEvent(
+                            type=StreamEventType.PART_DELTA,
+                            session_id=session_id,
+                            turn_id=turn_id,
+                            part_id=workflow_part_id,
+                            patch={"op": "field_set", "path": "status", "value": "running"},
+                        ))
+                    continue
                 stage = _event_stage_name(event)
                 if stage and stage in _STAGE_ORDER and stage != active_stage:
                     if text_stream_open and active_stage in _TEXT_STREAM_STAGES:
@@ -1363,7 +1443,11 @@ class ChatService:
                             "name": stage,
                             "phase": "call",
                             "title": _STAGE_LABELS.get(stage, stage),
-                            "input": {"workspace_id": workspace_id, "session_id": session_id},
+                            "input": {
+                                "workspace_id": workspace_id,
+                                "session_id": session_id,
+                                "attempt": attempt,
+                            },
                             "started_at": active_tool_started_at.isoformat(),
                         },
                     ))
@@ -1507,7 +1591,11 @@ class ChatService:
                 type=StreamEventType.ERROR,
                 session_id=session_id,
                 turn_id=turn_id,
-                message=_user_facing_runtime_error(exc),
+                message=_user_facing_runtime_error(
+                    exc,
+                    stage=active_tool_stage or active_stage,
+                    sql_result_emitted=sql_result_emitted,
+                ),
                 code="copilot_runtime_error",
                 recoverable=True,
             ))

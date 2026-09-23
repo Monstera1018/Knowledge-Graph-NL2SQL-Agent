@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from tools.llm import (
     chat,
+    clear_profile_rate_limits,
     generate_with_failover,
     is_llm_quota_or_rate_limit_error,
     load_llm_profiles,
@@ -38,6 +39,9 @@ class QuotaErrorDetectTest(unittest.TestCase):
     def test_burst_message_is_quota(self):
         exc = Exception("System protection triggered by request burst")
         self.assertTrue(is_llm_quota_or_rate_limit_error(exc))
+
+    def test_chinese_burst_message_is_quota(self):
+        self.assertTrue(is_llm_quota_or_rate_limit_error(Exception("触发突发保护，请降低访问频率")))
 
     def test_slow_down_message_is_quota(self):
         self.assertTrue(
@@ -88,6 +92,9 @@ class LoadProfilesTest(unittest.TestCase):
 
 
 class GenerateFailoverTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        clear_profile_rate_limits()
+
     async def test_switches_after_burst_before_any_chunk(self):
         primary = _FakeBackend(
             "primary",
@@ -105,6 +112,31 @@ class GenerateFailoverTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks, ["ok"])
         self.assertEqual(primary.calls, 1)
         self.assertEqual(fallback.calls, 1)
+
+    async def test_next_call_skips_recently_limited_primary(self):
+        first_primary = _FakeBackend(
+            "primary",
+            "openai/ark-code-latest",
+            error=Exception("System protection triggered by request burst"),
+        )
+        first_fallback = _FakeBackend("fallback", "openai/deepseek-v4-flash", chunks=["ok"])
+        with patch("tools.llm.asyncio.sleep", new=AsyncMock()):
+            async for _ in generate_with_failover(
+                [first_primary, first_fallback], SimpleNamespace(model=first_primary.model)
+            ):
+                pass
+
+        later_primary = _FakeBackend("primary", "openai/ark-code-latest", chunks=["should-not-use"])
+        later_fallback = _FakeBackend("fallback", "openai/deepseek-v4-flash", chunks=["still-ok"])
+        chunks = [
+            item
+            async for item in generate_with_failover(
+                [later_primary, later_fallback], SimpleNamespace(model=later_primary.model)
+            )
+        ]
+        self.assertEqual(chunks, ["still-ok"])
+        self.assertEqual(later_primary.calls, 0)
+        self.assertEqual(later_fallback.calls, 1)
 
     async def test_does_not_switch_after_partial_output(self):
         class _PartialBackend:
@@ -124,6 +156,32 @@ class GenerateFailoverTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("request burst", str(ctx.exception))
         self.assertEqual(fallback.calls, 0)
 
+    async def test_switches_after_empty_stream_chunk(self):
+        class _EmptyThenError:
+            profile_name = "primary"
+            model = "openai/deepseek-v4-flash"
+
+            async def generate_content_async(self, llm_request, stream: bool = False):
+                yield SimpleNamespace(
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="")]),
+                    partial=True,
+                    error_message=None,
+                    error_code=None,
+                )
+                raise Exception("System protection triggered by request burst")
+
+        fallback = _FakeBackend("fallback", "openai/ark-code-latest", chunks=["ok"])
+        with patch("tools.llm.asyncio.sleep", new=AsyncMock()):
+            chunks = [
+                item
+                async for item in generate_with_failover(
+                    [_EmptyThenError(), fallback],
+                    SimpleNamespace(model="openai/deepseek-v4-flash"),
+                )
+            ]
+        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(fallback.calls, 1)
+
     async def test_does_not_switch_on_auth_error(self):
         primary = _FakeBackend(
             "primary",
@@ -140,6 +198,9 @@ class GenerateFailoverTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ChatFailoverTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        clear_profile_rate_limits()
+
     async def test_chat_retries_on_agent_plan_after_burst(self):
         env = {
             "LLM_MODEL_NAME": "openai:deepseek-v4-flash",

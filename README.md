@@ -13,7 +13,7 @@ Knowledge-graph NL2SQL agent（自然语言问数助手）
 - 智能问数：用户输入自然语言问题，系统规划下一步、检索上下文、选择候选表、生成只读 SQL、校验并执行查询。
 - 分析图表：在已有查询结果快照上规划图表，按维度聚合展示，不另写 GROUP BY SQL。
 - 分析报告：按「总体情况 / 分类分析（含图表）/ 分析结论」生成 Word 报告，可在对话中下载。
-- 模型套餐切换：主套餐限流或额度用尽后，自动改走火山方舟 Agent Plan 再试一次。
+- 模型套餐切换：分析和向量化都优先走火山方舟 Agent Plan；限流或额度用尽后自动改走 Coding Plan，刚限流的套餐会冷却后再试。
 - 执行轨迹展示：前端展示规划、检索、选表、SQL、图表、报告等步骤及耗时。
 
 ## 技术栈
@@ -90,7 +90,7 @@ Knowledge-graph NL2SQL agent（自然语言问数助手）
        -> table_selector 选择候选表
        -> load_sql_schema_context 加载完整 schema
        -> sql_generator 生成 SQL
-       -> validate_sql 校验只读、安全性、表字段和方言
+       -> validate_sql 校验只读、安全性、表字段和语法
        -> execute_sql 执行查询，写入结果快照
        -> 回到 planner
   -> 出图：chart_planner 基于快照规划图表
@@ -123,28 +123,28 @@ GET  /api/chat/reports/{file_id}
 
 聊天、规划、选表、生成 SQL、出图和报告都走同一套入口：`adk_agents/common.py:get_llm_model()`。通用文本调用在 `tools/llm.py:chat()`，与智能体共用主/备用套餐配置。
 
-主套餐按火山引擎 Coding Plan OpenAI 兼容接口配置：
-
-```env
-ARK_API_KEY=替换为你的 Coding Plan API Key
-
-LLM_MODEL_NAME=openai:ark-code-latest
-OPENAI_API_BASE=https://ark.cn-beijing.volces.com/api/coding/v3
-OPENAI_API_KEY=${ARK_API_KEY}
-```
-
-备用套餐走 Agent Plan。主套餐遇到限流、突发保护（如 `request burst`）或额度用尽，且这轮还没产出内容时，会自动换套餐再试一次；同套餐不会连打。Agent Plan 必须使用专属 Key，不要和 Coding Plan / 普通方舟 Key 混用。未配齐备用地址和 Key 时不会切换。
+主套餐优先走火山引擎 Agent Plan OpenAI 兼容接口：
 
 ```env
 ARK_AGENT_PLAN_API_KEY=替换为你的 Agent Plan 专属 Key
-LLM_FALLBACK_MODEL_NAME=openai:ark-code-latest
-LLM_FALLBACK_API_BASE=https://ark.cn-beijing.volces.com/api/plan/v3
-LLM_FALLBACK_API_KEY=${ARK_AGENT_PLAN_API_KEY}
+
+LLM_MODEL_NAME=openai:ark-code-latest
+OPENAI_API_BASE=https://ark.cn-beijing.volces.com/api/plan/v3
+OPENAI_API_KEY=${ARK_AGENT_PLAN_API_KEY}
 ```
 
-`LLM_FALLBACK_MODEL_NAME` 需在 Agent Plan 套餐支持矩阵里。`ark-code-latest` 是 Auto 模型；也可以改成套餐中已开通的其它模型，例如 `openai:deepseek-v4-flash`。
+备用套餐走 Coding Plan。主套餐遇到限流、突发保护（如 `request burst`）或额度用尽，且这次调用还没产出内容时，会自动换套餐再试一次；刚限流过的套餐会冷却一段时间，后续节点先走另一套，避免每个步骤再撞一次。Agent Plan 必须使用专属 Key，不要和 Coding Plan / 普通方舟 Key 混用。未配齐备用地址和 Key 时不会切换。
 
-修改 `.env` 后必须重启后端，备用套餐才会生效。Embedding 仍走下面的 `EMBEDDING_*`，默认不切 Agent Plan。
+```env
+ARK_API_KEY=替换为你的 Coding Plan API Key
+LLM_FALLBACK_MODEL_NAME=openai:deepseek-v4-flash
+LLM_FALLBACK_API_BASE=https://ark.cn-beijing.volces.com/api/coding/v3
+LLM_FALLBACK_API_KEY=${ARK_API_KEY}
+```
+
+`LLM_MODEL_NAME` 需在 Agent Plan 套餐支持矩阵里。`ark-code-latest` 是 Auto 模型；也可以改成套餐中已开通的其它模型。
+
+修改 `.env` 后必须重启后端，主/备用套餐才会生效。聊天模型和 Embedding 都先走 Agent Plan，限流或额度用尽时再改走 Coding Plan。
 
 表结构导入时如果开启表描述生成，会调用大模型：
 
@@ -162,10 +162,12 @@ LLM_GENERATE_TABLE_DESCRIPTION=false
 
 ```env
 EMBEDDING_MODEL_NAME=openai:doubao-embedding-vision
-EMBEDDING_API_BASE=https://ark.cn-beijing.volces.com/api/coding/v3
-EMBEDDING_API_KEY=${ARK_API_KEY}
+EMBEDDING_API_BASE=https://ark.cn-beijing.volces.com/api/plan/v3
+EMBEDDING_API_KEY=${ARK_AGENT_PLAN_API_KEY}
 EMBEDDING_MODE=litellm
 ```
+
+Embedding 同样优先 Agent Plan。额度用尽时，会改用 Coding Plan 备用地址和 Key（默认复用 `LLM_FALLBACK_*`）。如需单独指定，可再配 `EMBEDDING_FALLBACK_API_BASE` / `EMBEDDING_FALLBACK_API_KEY`。
 
 注意：当前火山 embedding 实际返回 2048 维向量，因此 Milvus collection 维度需要是：
 
@@ -447,7 +449,7 @@ http://localhost:4200
 1. 确认 Neo4j 已启动
 2. 确认 Milvus 已启动
 3. 确认业务数据库可连接
-4. 确认 .env 中大模型和 embedding 接口配置正确；如需限流切换，同时配好 Agent Plan 备用套餐
+4. 确认 .env 中大模型和 embedding 接口优先走 Agent Plan；如需限流切换，同时配好 Coding Plan 备用套餐
 5. 如数据有变化，先执行 python scripts/init.py 初始化 Neo4j 和 Milvus
 6. 启动后端：uvicorn server.app:app --host 127.0.0.1 --port 8000
    开发热更新可改用：uvicorn server.app:app --host 127.0.0.1 --port 8000 --reload
@@ -655,11 +657,11 @@ python scripts\init.py
 
 ### 5. 模型接口提示限流或无法生成报告
 
-原因：火山 Coding Plan 触发了突发保护或额度限制。若已配置 Agent Plan 备用套餐，后端会自动换套餐再试；两套都失败时，对话里会提示稍后再发「生成分析报告」，不必重新取数。
+原因：当前优先使用的 Agent Plan 触发了突发保护或额度限制。若已配置 Coding Plan 备用套餐，后端会自动换套餐再试，并在冷却期内让后续节点先走备用套餐；两套都失败时，对话里会按当前步骤提示：问数未完成则请稍后再发同一问题；出图或出报告失败则说明查询结果还在，不必重新取数。
 
 处理：
 
-- 确认 `.env` 中 `LLM_FALLBACK_API_BASE` 为 `https://ark.cn-beijing.volces.com/api/plan/v3`。
+- 确认 `.env` 中 `OPENAI_API_BASE` 与 `EMBEDDING_API_BASE` 为 `https://ark.cn-beijing.volces.com/api/plan/v3`。
 - 确认 `ARK_AGENT_PLAN_API_KEY` 是 Agent Plan 专属 Key，不是 Coding Plan Key。
 - 修改 `.env` 后重启后端。
 - 同一会话直接发送「生成分析报告」，不要把整句取数问题再发一遍。

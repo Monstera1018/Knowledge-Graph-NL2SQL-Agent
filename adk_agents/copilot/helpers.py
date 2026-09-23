@@ -17,9 +17,20 @@ SQL_LAST_ATTEMPT_STATE_KEY = "sql_last_attempt"
 SQL_VALIDATED_SQL_STATE_KEY = "sql_validated_sql"
 SQL_GENERATOR_LOGIC_STATE_KEY = "sql_generator_logic"
 SQL_GENERATION_ATTEMPT_STATE_KEY = "sql_generation_attempt"
+GRAIN_REWRITE_STATE_KEY = "sql_grain_rewrite"
+GRAIN_REWRITE_FEEDBACK = (
+    "当前查询结果缺少出图所需的分析维度，只有合计或明细对不上。"
+    "请按工单类型、流程状态、环节状态、地区或时间等分类列 GROUP BY，"
+    "SELECT 里必须同时包含维度列和 COUNT/SUM/AVG 指标，不要只输出一个合计数字，也不要再输出逐行清单。"
+    "FROM/JOIN 表名仍只能来自本轮候选表白名单；用户未要求的额外过滤不要抄入。"
+)
 SQL_SELECTED_TABLE_DETAILS_STATE_KEY = "sql_selected_table_details"
+TABLE_RESELECT_ATTEMPT_STATE_KEY = "table_reselect_attempt"
+TABLE_RESELECT_FEEDBACK_STATE_KEY = "table_reselect_feedback"
+RETRIEVAL_CONTEXT_STATE_KEY = "retrieval_context"
 NO_USABLE_TABLE_MESSAGE = "未识别到可用数据表，请补充查询目标。"
 MAX_SQL_GENERATION_ATTEMPTS = 3
+MAX_TABLE_RESELECT_ATTEMPTS = 1
 SQL_LAST_ATTEMPT_MAX_CHARS = 12_000
 DEFAULT_SQL_EXECUTION_MAX_ROWS = 100
 EXTRACTOR_USER_HISTORY_MAX_TURNS = 5
@@ -39,8 +50,8 @@ EXTRACTOR_RESULT_STATE_KEY = "extractor_result"
 LAST_CHART_SPEC_STATE_KEY = "last_chart_spec"
 LAST_REPORT_SPEC_STATE_KEY = "last_report_spec"
 _CHART_REQUEST_RE = re.compile(
-    r"(画(个|一张|一个)?(分析)?图|生成(分析)?图表|出(个|一张|一个)?(分析)?图|"
-    r"可视化|柱状图|折线图|饼图|趋势图|统计图|分析图表|图表|"
+    r"(画(个|一张|一个)?(分析)?图|生成(分析)?图(表)?|出(个|一张|一个)?(分析)?图|"
+    r"出图|绘图|作图|可视化|柱状图|折线图|饼图|趋势图|统计图|分析图(表)?|图表|"
     r"换成(饼图|柱状图|折线图)|改成(饼图|柱状图|折线图)|换(一个|种|个)?(展示形式|图)|"
     r"换(个|一种)?颜色|色调|配色|看(一下)?趋势)",
 )
@@ -335,10 +346,32 @@ def format_sql_generator_user_message(ctx: Context, node_input) -> str:
         return base
 
     last_attempt = (ctx.state.get(SQL_LAST_ATTEMPT_STATE_KEY) or "").strip()
+    grain_rewrite = str(ctx.state.get(GRAIN_REWRITE_STATE_KEY) or "").strip() == "1"
+    if grain_rewrite:
+        parts = [
+            base,
+            "",
+            "**当前结果缺少出图维度，请改为带分类列的汇总查询**",
+            "",
+            feedback,
+        ]
+        if last_attempt:
+            parts.extend([
+                "",
+                "**上次 SQL（请改写成带维度的 GROUP BY 汇总，不要只输出一个合计）**",
+                "",
+                last_attempt,
+            ])
+        parts.extend([
+            "",
+            "请只输出说明 + ```sql 代码块。",
+        ])
+        return "\n".join(parts)
+
     parts = [
         base,
         "",
-        "**上次 SQL 校验未通过**",
+        "**上次 SQL 需要修正**",
         "",
         feedback,
     ]
@@ -352,6 +385,7 @@ def format_sql_generator_user_message(ctx: Context, node_input) -> str:
     parts.extend([
         "",
         "请根据上述错误修正 SQL 后重新生成（仍只输出说明 + ```sql 代码块）。",
+        "优先改写或删除被点名的条件；不要为已经明确的取值反复调用 lookup。",
     ])
     return "\n".join(parts)
 
@@ -433,9 +467,86 @@ def _serialize_result_rows(rows: list[dict[str, object]]) -> tuple[list[str], li
     return columns, serialized
 
 
+_ID_COLUMN_RE = re.compile(
+    r"(编号|户号|工单号|工单编号|编码|(^|_)id$|(^|_)no$|uuid|cust_no|acct_no|order_no)",
+    re.I,
+)
+SNAPSHOT_GRAIN_DETAIL = "detail"
+SNAPSHOT_GRAIN_AGGREGATED = "aggregated"
+SNAPSHOT_GRAIN_NONE = "none"
+
+
+def _column_unique_count(rows: list[dict[str, Any]], column: str) -> int:
+    return len({
+        str(row.get(column) or "").strip()
+        for row in rows
+        if str(row.get(column) or "").strip()
+    })
+
+
+def infer_snapshot_grain(
+        snapshot: dict[str, Any] | None,
+        *,
+        sql: str = "",
+        dialect: str = "",
+) -> str:
+    """判断快照是明细清单还是已按维度汇总。"""
+    if not snapshot:
+        return SNAPSHOT_GRAIN_NONE
+    raw_sets = snapshot.get("result_sets")
+    if not isinstance(raw_sets, list) or not raw_sets:
+        return SNAPSHOT_GRAIN_NONE
+    first = raw_sets[0] if isinstance(raw_sets[0], dict) else {}
+    columns = [str(item).strip() for item in (first.get("columns") or []) if str(item).strip()]
+    rows = [item for item in (first.get("rows") or []) if isinstance(item, dict)]
+    if not columns or not rows:
+        return SNAPSHOT_GRAIN_NONE
+
+    sql_text = (sql or str(snapshot.get("sql") or "")).strip()
+    read_dialect = (dialect or str(snapshot.get("dialect") or "mysql")).strip() or "mysql"
+    if sql_text:
+        from tools.sql_provenance import sql_has_grouping
+
+        if sql_has_grouping(sql_text, read_dialect):
+            return SNAPSHOT_GRAIN_AGGREGATED
+
+    row_count = len(rows)
+    identifier_columns = 0
+    category_columns = 0
+    for column in columns:
+        uniques = _column_unique_count(rows, column)
+        high_cardinality = row_count >= 8 and uniques >= max(8, int(row_count * 0.8))
+        if _ID_COLUMN_RE.search(column) or high_cardinality:
+            identifier_columns += 1
+            continue
+        if 2 <= uniques <= 20:
+            category_columns += 1
+    if identifier_columns and row_count >= 8:
+        return SNAPSHOT_GRAIN_DETAIL
+    if row_count <= 20 and category_columns:
+        return SNAPSHOT_GRAIN_AGGREGATED
+    if row_count <= 12:
+        return SNAPSHOT_GRAIN_AGGREGATED
+    return SNAPSHOT_GRAIN_DETAIL
+
+
+def snapshot_is_truncated(snapshot: dict[str, Any] | None) -> bool:
+    if not snapshot:
+        return False
+    if snapshot.get("truncated") is True:
+        return True
+    raw_sets = snapshot.get("result_sets")
+    if not isinstance(raw_sets, list):
+        return False
+    return any(isinstance(item, dict) and item.get("truncated") is True for item in raw_sets)
+
+
 def save_query_snapshot(
         ctx: Context,
         result_sets: list[tuple[list[dict[str, object]], bool]],
+        *,
+        sql: str = "",
+        dialect: str = "",
 ) -> None:
     """问数成功后写入快照，供后续按需出图使用；reset_sql_turn_state 不会清理。"""
     sets: list[dict[str, Any]] = []
@@ -456,7 +567,11 @@ def save_query_snapshot(
         "selected_tables": selected_table_names_from_state(ctx),
         "result_sets": sets,
         "row_count": sum(item["row_count"] for item in sets),
+        "sql": (sql or "").strip(),
+        "dialect": (dialect or "").strip(),
+        "truncated": any(bool(truncated) for _, truncated in result_sets),
     }
+    payload["grain"] = infer_snapshot_grain(payload, sql=sql, dialect=dialect)
     ctx.state[QUERY_SNAPSHOT_STATE_KEY] = json.dumps(payload, ensure_ascii=False)
     ctx.state[QUERY_SNAPSHOT_FRESH_STATE_KEY] = "1"
     # 新查询结果作废上一张图和上一份报告，避免套到新数据。
@@ -655,7 +770,52 @@ def load_last_report_spec(ctx: Context) -> dict[str, Any] | None:
     return None
 
 
-def format_table_selector_user_message(stage: SearchStageOutput) -> str:
+def load_table_reselect_attempt(ctx: Context) -> int:
+    raw = ctx.state.get(TABLE_RESELECT_ATTEMPT_STATE_KEY)
+    try:
+        return max(int(raw or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def can_reselect_tables(ctx: Context) -> bool:
+    return load_table_reselect_attempt(ctx) < MAX_TABLE_RESELECT_ATTEMPTS
+
+
+def begin_grain_rewrite(ctx: Context, extra_feedback: str = "") -> None:
+    """出图/报告缺维度时，复用已有表结构再生成一次带分类列的汇总 SQL。"""
+    ctx.state[GRAIN_REWRITE_STATE_KEY] = "1"
+    ctx.state[SQL_GENERATION_ATTEMPT_STATE_KEY] = 0
+    feedback = GRAIN_REWRITE_FEEDBACK
+    extra = extra_feedback.strip()
+    if extra:
+        feedback = f"{GRAIN_REWRITE_FEEDBACK}\n上次失败原因：{extra}"
+    ctx.state[SQL_VALIDATION_FEEDBACK_STATE_KEY] = feedback
+    clear_state_key(ctx, SQL_VALIDATED_SQL_STATE_KEY)
+    snapshot = load_query_snapshot(ctx)
+    previous_sql = str((snapshot or {}).get("sql") or "").strip()
+    if previous_sql:
+        ctx.state[SQL_LAST_ATTEMPT_STATE_KEY] = f"```sql\n{previous_sql}\n```"
+
+
+def begin_table_reselect(ctx: Context, errors: list[str] | tuple[str, ...]) -> None:
+    """记录换表原因并重置 SQL 重试次数，让新表组合重新生成。"""
+    ctx.state[TABLE_RESELECT_ATTEMPT_STATE_KEY] = str(load_table_reselect_attempt(ctx) + 1)
+    feedback = "\n".join(f"- {item}" for item in errors if str(item).strip())
+    ctx.state[TABLE_RESELECT_FEEDBACK_STATE_KEY] = feedback or "- 上次选表不足以完成本轮问数，请调整表组合。"
+    ctx.state[SQL_GENERATION_ATTEMPT_STATE_KEY] = 0
+    clear_state_key(ctx, SQL_VALIDATION_FEEDBACK_STATE_KEY)
+    clear_state_key(ctx, SQL_LAST_ATTEMPT_STATE_KEY)
+    clear_state_key(ctx, SQL_VALIDATED_SQL_STATE_KEY)
+    clear_state_key(ctx, SQL_GENERATOR_LOGIC_STATE_KEY)
+
+
+def format_table_selector_user_message(
+        stage: SearchStageOutput,
+        *,
+        reselect_feedback: str = "",
+        previous_tables: list[str] | None = None,
+) -> str:
     """构造 table_selector 可读的用户消息，避免 ADK BaseModel 直接转储为 JSON。"""
     user_message = (stage.user_message or "").strip() or "（无）"
     retrieval_context = (stage.retrieval_context or "").strip() or "（无检索结果）"
@@ -664,7 +824,7 @@ def format_table_selector_user_message(stage: SearchStageOutput) -> str:
         for table_name in stage.table_candidates
     ]
     candidates = "\n".join(candidate_lines) if candidate_lines else "（无候选表）"
-    return "\n".join([
+    parts = [
         "## 用户问题",
         "",
         user_message,
@@ -674,8 +834,37 @@ def format_table_selector_user_message(stage: SearchStageOutput) -> str:
         candidates,
         "",
         "注意：只能从上述白名单中选择表名，必须逐字复制完整表名，不得改写、缩写、补全或输出相似表名。",
+    ]
+    feedback = (reselect_feedback or "").strip()
+    previous = [str(name).strip() for name in (previous_tables or []) if str(name).strip()]
+    if feedback or previous:
+        parts.extend([
+            "",
+            "## 上次选表需要调整",
+            "",
+        ])
+        if previous:
+            parts.extend([
+                "上次选择的表：",
+                "",
+                *[f"- `{name}`" for name in previous],
+                "",
+            ])
+        if feedback:
+            parts.extend([
+                "调整原因：",
+                "",
+                feedback,
+                "",
+            ])
+        parts.extend([
+            "请在白名单中重新选择：可以保留仍需要的表、补上缺失的表，或换掉不合适的表。",
+            "不要只重复已经证明不够用的同一组表，除非白名单没有更好的选择。",
+        ])
+    parts.extend([
         "",
         "## 检索上下文",
         "",
         retrieval_context,
     ])
+    return "\n".join(parts)

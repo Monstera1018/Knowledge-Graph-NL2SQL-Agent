@@ -18,6 +18,7 @@ export interface ChatChartSpec {
   feasible: boolean;
   summary: string;
   sourceRowCount: number;
+  sourceTruncated: boolean;
   palette: string[];
   charts: ChatChartView[];
 }
@@ -103,6 +104,7 @@ export function parseChartSpec(payload: Record<string, unknown>): ChatChartSpec 
     feasible: payload['feasible'] === true && charts.length > 0,
     summary,
     sourceRowCount,
+    sourceTruncated: payload['source_truncated'] === true,
     palette: specPalette,
     charts,
   };

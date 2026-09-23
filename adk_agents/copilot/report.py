@@ -11,8 +11,11 @@ from typing import Any
 from uuid import uuid4
 
 from adk_agents.copilot.chart import (
+    _format_previous_charts,
+    _snapshot_sets,
     coerce_chart_plan,
     format_snapshot_result_overview,
+    infer_column_kind,
     infer_fallback_chart_plan,
     materialize_chart_spec,
     parse_json_objects,
@@ -30,7 +33,12 @@ def reports_dir() -> Path:
     return path
 
 
-def _empty_report(summary: str, *, source_row_count: int = 0) -> dict[str, Any]:
+def _empty_report(
+        summary: str,
+        *,
+        source_row_count: int = 0,
+        source_truncated: bool = False,
+) -> dict[str, Any]:
     return {
         "kind": "analysis_report",
         "feasible": False,
@@ -42,6 +50,7 @@ def _empty_report(summary: str, *, source_row_count: int = 0) -> dict[str, Any]:
         "file_id": "",
         "filename": "",
         "source_row_count": source_row_count,
+        "source_truncated": source_truncated,
     }
 
 
@@ -49,6 +58,7 @@ def format_report_planner_user_message(
         *,
         user_request: str,
         snapshot: dict[str, Any],
+        last_chart: dict[str, Any] | None = None,
 ) -> str:
     previous_question = str(snapshot.get("user_question") or "").strip() or "（无）"
     tables = snapshot.get("selected_tables")
@@ -58,10 +68,21 @@ def format_report_planner_user_message(
         else "（无）"
     )
     schema_context = str(snapshot.get("schema_context") or "").strip() or "（无）"
+    allowed_columns: list[str] = []
+    sets = _snapshot_sets(snapshot)
+    if sets:
+        allowed_columns = [str(item).strip() for item in sets[0].get("columns") or [] if str(item).strip()]
+    allowed_text = "、".join(f"`{name}`" for name in allowed_columns) if allowed_columns else "（无）"
     return "\n".join([
         "## 用户报告要求",
         "",
         (user_request or "").strip() or "请基于当前查询结果生成分析报告。",
+        "",
+        "## 本轮允许绑定的结果列",
+        "",
+        allowed_text,
+        "",
+        "只能用上面这些列名。表结构里有、但这里没有的字段不能作为分析维度或指标。",
         "",
         "## 上一轮用户问题",
         "",
@@ -79,8 +100,197 @@ def format_report_planner_user_message(
         "",
         format_snapshot_result_overview(snapshot),
         "",
-        "请只输出 JSON。列名必须来自上述结果概要。正文用中文，结论要能被当前数字支撑。",
+        "## 上一张图表",
+        "",
+        _format_previous_charts(last_chart),
+        "",
+        "请只输出完整可解析的 JSON。列名必须来自上述结果列。正文用中文，结论要能被当前数字支撑。",
     ])
+
+
+def _is_materialized_chart(chart: dict[str, Any] | None) -> bool:
+    return bool(isinstance(chart, dict) and chart.get("categories"))
+
+
+def _pick_report_plan(objects: list[dict[str, Any]]) -> dict[str, Any]:
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        score = 0
+        if item.get("overview"):
+            score += 2
+        if isinstance(item.get("analyses"), list) and item.get("analyses"):
+            score += 3
+        if item.get("conclusions"):
+            score += 2
+        if item.get("title"):
+            score += 1
+        if item.get("feasible") is True:
+            score += 1
+        if score:
+            scored.append((score, item))
+    if scored:
+        scored.sort(key=lambda pair: pair[0])
+        return scored[-1][1]
+    return {}
+
+
+def _report_has_body(plan: dict[str, Any] | None) -> bool:
+    if not isinstance(plan, dict):
+        return False
+    if str(plan.get("overview") or "").strip() or str(plan.get("conclusions") or "").strip():
+        return True
+    analyses = plan.get("analyses")
+    return isinstance(analyses, list) and any(isinstance(item, dict) for item in analyses)
+
+
+def _chart_narrative(chart: dict[str, Any]) -> str:
+    categories = [str(item).strip() for item in (chart.get("categories") or []) if str(item).strip()]
+    series = chart.get("series") if isinstance(chart.get("series"), list) else []
+    values: list[float] = []
+    if series and isinstance(series[0], dict):
+        raw_values = series[0].get("values") or []
+        if isinstance(raw_values, list):
+            values = [float(item) for item in raw_values]
+    pairs = [
+        (name, values[index] if index < len(values) else 0.0)
+        for index, name in enumerate(categories)
+    ]
+    if not pairs:
+        return "该维度在当前返回行中没有可汇总的分类。"
+    pairs.sort(key=lambda item: item[1], reverse=True)
+    total = sum(item[1] for item in pairs)
+    parts = [f"当前返回行覆盖 {len(pairs)} 个分类"]
+    if total:
+        parts.append(f"合计 {total:g}")
+    parts.append(f"最高的是{pairs[0][0]}（{pairs[0][1]:g}）")
+    if len(pairs) > 1:
+        parts.append(f"其次是{pairs[1][0]}（{pairs[1][1]:g}）")
+    return "，".join(parts) + "。数字仅基于当前返回行。"
+
+
+def _overview_from_snapshot(snapshot: dict[str, Any] | None, user_request: str) -> str:
+    if not snapshot:
+        return ""
+    question = str(snapshot.get("user_question") or user_request or "当前查询结果").strip()
+    row_count = int(snapshot.get("row_count") or 0)
+    truncated = bool(snapshot.get("truncated"))
+    lines = [f"本报告基于「{question}」的查询结果，共返回 {row_count} 行。"]
+    if truncated:
+        lines.append("结果已截断，下文数字仅基于这些返回行，不能当作全量统计。")
+    sets = _snapshot_sets(snapshot)
+    if not sets:
+        return "".join(f"{item}\n" for item in lines).strip()
+    columns = [str(item).strip() for item in sets[0].get("columns") or [] if str(item).strip()]
+    rows = sets[0].get("rows") or []
+    if columns:
+        lines.append(f"结果列包括：{'、'.join(columns)}。")
+    for column in columns:
+        if infer_column_kind(rows, column) not in {"category", "time"}:
+            continue
+        counts: dict[str, int] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            value = str(row.get(column) or "").strip()
+            if value:
+                counts[value] = counts.get(value, 0) + 1
+        if 2 <= len(counts) <= 12:
+            dist = "、".join(f"{name} {count} 条" for name, count in sorted(counts.items(), key=lambda item: item[1], reverse=True))
+            lines.append(f"按{column}看，分布为：{dist}。")
+            break
+    return "\n".join(lines)
+
+
+def _analyses_from_last_charts(last_chart: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not last_chart or last_chart.get("feasible") is False:
+        return []
+    charts = last_chart.get("charts")
+    if not isinstance(charts, list):
+        return []
+    analyses: list[dict[str, Any]] = []
+    for chart in charts[:MAX_REPORT_ANALYSES]:
+        if not _is_materialized_chart(chart):
+            continue
+        title = str(chart.get("title") or "分析维度").strip()
+        analyses.append({
+            "heading": title,
+            "narrative": _chart_narrative(chart),
+            "chart": chart,
+        })
+    return analyses
+
+
+def _analyses_from_snapshot(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
+    sets = _snapshot_sets(snapshot)
+    if not sets:
+        return []
+    columns = [str(item).strip() for item in sets[0].get("columns") or [] if str(item).strip()]
+    rows = sets[0].get("rows") or []
+    analyses: list[dict[str, Any]] = []
+    for column in columns:
+        if infer_column_kind(rows, column) not in {"category", "time"}:
+            continue
+        plan = infer_fallback_chart_plan(f"按{column}分布", snapshot)
+        if not plan:
+            continue
+        analyses.append({
+            "heading": f"按{column}分布",
+            "narrative": f"按「{column}」对当前返回行做分类汇总。",
+            "chart": plan,
+        })
+        if len(analyses) >= MAX_REPORT_ANALYSES:
+            break
+    return analyses
+
+
+def _conclusions_from_analyses(analyses: list[dict[str, Any]], *, truncated: bool) -> str:
+    items: list[str] = []
+    for item in analyses:
+        chart = item.get("chart") if isinstance(item, dict) else None
+        if not _is_materialized_chart(chart):
+            heading = str((item or {}).get("heading") or "").strip()
+            if heading:
+                items.append(f"{heading}已纳入分类分析，需结合图表查看构成。")
+            continue
+        narrative = _chart_narrative(chart)
+        heading = str(item.get("heading") or chart.get("title") or "该维度").strip()
+        items.append(f"{heading}：{narrative}")
+    if truncated:
+        items.append("因结果截断，以上结论只反映已返回行，扩大查询范围后可能变化。")
+    if not items:
+        return "当前结果可以先看总量和已有分类，再按需要补充分析维度。"
+    return "\n".join(f"{index}、{text}" for index, text in enumerate(items, start=1))
+
+
+def synthesize_report_plan(
+        snapshot: dict[str, Any] | None,
+        *,
+        user_request: str = "",
+        last_chart: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """模型方案解析失败时，用快照和已有图表拼一份可落地的报告。"""
+    if not snapshot:
+        return None
+    sets = _snapshot_sets(snapshot)
+    if not sets or not sets[0].get("rows"):
+        return None
+    analyses = _analyses_from_last_charts(last_chart) or _analyses_from_snapshot(snapshot)
+    title = str(snapshot.get("user_question") or user_request or "数据分析报告").strip()
+    if not title.endswith("分析报告"):
+        title = f"{title}分析报告"
+    return {
+        "feasible": True,
+        "summary": "已根据当前查询结果自动整理分析报告。",
+        "title": title,
+        "overview": _overview_from_snapshot(snapshot, user_request),
+        "analyses": analyses,
+        "conclusions": _conclusions_from_analyses(
+            analyses,
+            truncated=bool(snapshot.get("truncated")),
+        ),
+    }
 
 
 def _paragraphs(text: str) -> list[str]:
@@ -348,22 +558,36 @@ def materialize_analysis_report(
         snapshot: dict[str, Any] | None,
         *,
         user_request: str = "",
+        last_chart: dict[str, Any] | None = None,
         write_file: bool = True,
 ) -> dict[str, Any]:
     source_row_count = 0
+    source_truncated = False
     if snapshot:
         source_row_count = int(snapshot.get("row_count") or 0)
-    parsed_objects = parse_json_objects(raw_text)
-    plan = parsed_objects[-1] if parsed_objects else {}
-    if not plan:
-        return _empty_report(
-            "未能理解报告方案，请再说明希望分析哪些维度。",
-            source_row_count=source_row_count,
+        source_truncated = bool(snapshot.get("truncated")) or any(
+            isinstance(item, dict) and item.get("truncated") is True
+            for item in (snapshot.get("result_sets") or [])
         )
+    parsed_objects = parse_json_objects(raw_text)
+    plan = _pick_report_plan(parsed_objects)
     if plan.get("feasible") is False:
         return _empty_report(
             str(plan.get("summary") or "当前结果不足以生成分析报告。").strip(),
             source_row_count=source_row_count,
+            source_truncated=source_truncated,
+        )
+    if not _report_has_body(plan):
+        plan = synthesize_report_plan(
+            snapshot,
+            user_request=user_request,
+            last_chart=last_chart,
+        ) or {}
+    if not _report_has_body(plan):
+        return _empty_report(
+            "当前结果缺少可分析的分类维度，请补充希望按哪些字段汇总。",
+            source_row_count=source_row_count,
+            source_truncated=source_truncated,
         )
 
     title = str(plan.get("title") or "").strip() or str(
@@ -382,13 +606,16 @@ def materialize_analysis_report(
         heading = str(item.get("heading") or item.get("dimension") or "").strip() or "分析维度"
         narrative = str(item.get("narrative") or item.get("analysis") or "").strip()
         chart_plan = item.get("chart") if isinstance(item.get("chart"), dict) else None
-        chart, chart_error = _materialize_one_chart(
-            chart_plan,
-            snapshot,
-            heading=heading,
-            user_request=user_request,
-            palette=plan.get("palette"),
-        )
+        if _is_materialized_chart(chart_plan):
+            chart, chart_error = chart_plan, ""
+        else:
+            chart, chart_error = _materialize_one_chart(
+                chart_plan,
+                snapshot,
+                heading=heading,
+                user_request=user_request,
+                palette=plan.get("palette"),
+            )
         analyses.append({
             "heading": heading,
             "narrative": narrative,
@@ -400,6 +627,7 @@ def materialize_analysis_report(
         return _empty_report(
             "报告正文为空，请再试一次。",
             source_row_count=source_row_count,
+            source_truncated=source_truncated,
         )
 
     payload: dict[str, Any] = {
@@ -413,6 +641,7 @@ def materialize_analysis_report(
         "file_id": "",
         "filename": "",
         "source_row_count": source_row_count,
+        "source_truncated": source_truncated,
     }
     if write_file:
         file_id = uuid4().hex

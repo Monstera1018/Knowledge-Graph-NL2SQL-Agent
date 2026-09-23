@@ -13,6 +13,8 @@ import { ChatMarkdownComponent } from './chat-markdown.component';
         [content]="displayText()"
         [enhanceQueryCards]="!streaming()"
         [streaming]="streaming()"
+        [allowSqlPrecipitate]="!streaming()"
+        [precipitateName]="question()"
       />
     </div>
   `,
@@ -22,6 +24,7 @@ import { ChatMarkdownComponent } from './chat-markdown.component';
 export class ChatTextPartComponent {
   readonly part = input.required<TextPart>();
   readonly streaming = input(false);
+  readonly question = input('');
 
   protected readonly displayText = computed(() => {
     const text = this.part().text;

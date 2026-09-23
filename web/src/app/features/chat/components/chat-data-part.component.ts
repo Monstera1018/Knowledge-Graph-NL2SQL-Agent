@@ -270,6 +270,15 @@ export class ChatDataPartComponent {
     return this.part().payload['feasible'] === true;
   }
 
+  protected reportSourceTruncated(): boolean {
+    return this.part().payload['source_truncated'] === true;
+  }
+
+  protected reportSourceRowCount(): number {
+    const value = this.part().payload['source_row_count'];
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  }
+
   protected reportDownloadable(): boolean {
     return this.reportFeasible() && Boolean(this.text('file_id'));
   }

@@ -40,7 +40,7 @@ class WebSafeLiteLlm(LiteLlm):
 
 
 class FailoverLiteLlm(WebSafeLiteLlm):
-    """主套餐限流或额度用尽后，改走备用套餐（通常为火山方舟 Agent Plan）。"""
+    """主套餐限流或额度用尽后，改走备用套餐（当前主套餐优先 Agent Plan）。"""
 
     _fallback_llm: Optional[WebSafeLiteLlm] = PrivateAttr(default=None)
 
@@ -72,7 +72,7 @@ class FailoverLiteLlm(WebSafeLiteLlm):
 
 
 def get_llm_model():
-    """所有 ADK Agent 共用：主套餐 + 可选 Agent Plan 备用套餐。"""
+    """所有 ADK Agent 共用：主套餐优先 Agent Plan，备用为 Coding Plan。"""
 
     profiles = load_llm_profiles()
     primary = litellm_agent_kwargs(profiles[0])

@@ -1,0 +1,42 @@
+<div class="sql-precipitate" role="dialog" aria-labelledby="sql-precipitate-title">
+  <h2 class="sql-precipitate__title" id="sql-precipitate-title">沉淀为历史 SQL</h2>
+  <p class="sql-precipitate__hint">提交后进入 SQL 页，来源为 LLM 生成，状态为待审核。通过后才会启用并参与问数。</p>
+
+  <label class="sql-precipitate__field">
+    <span>样例名称</span>
+    <input
+      type="text"
+      [ngModel]="name()"
+      (ngModelChange)="name.set($event)"
+      [disabled]="saving()"
+    />
+  </label>
+
+  <label class="sql-precipitate__field">
+    <span>逻辑说明</span>
+    <textarea
+      rows="5"
+      [ngModel]="logic()"
+      (ngModelChange)="logic.set($event)"
+      [disabled]="saving()"
+    ></textarea>
+  </label>
+
+  <label class="sql-precipitate__field">
+    <span>SQL</span>
+    <textarea
+      class="sql-precipitate__sql"
+      rows="10"
+      [ngModel]="content()"
+      (ngModelChange)="content.set($event)"
+      [disabled]="saving()"
+    ></textarea>
+  </label>
+
+  <footer class="sql-precipitate__actions">
+    <button type="button" class="app-btn" [disabled]="saving()" (click)="cancel()">取消</button>
+    <button type="button" class="app-btn sql-precipitate__submit" [disabled]="saving()" (click)="submit()">
+      {{ saving() ? '提交中…' : '加入待审核' }}
+    </button>
+  </footer>
+</div>

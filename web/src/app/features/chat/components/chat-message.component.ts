@@ -21,6 +21,7 @@ import { ChatPartComponent } from './chat-part.component';
 })
 export class ChatMessageComponent {
   readonly message = input.required<ChatMessage>();
+  readonly question = input('');
 
   protected readonly userMessage = computed(() => {
     const message = this.message();

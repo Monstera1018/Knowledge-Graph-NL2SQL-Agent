@@ -24,6 +24,26 @@ describe('parseChartSpec', () => {
     expect(spec.charts[0].type).toBe('bar');
     expect(spec.charts[0].series[0].values).toEqual([2, 1]);
     expect(spec.charts[0].palette).toEqual([]);
+    expect(spec.sourceTruncated).toBe(false);
+  });
+
+  it('keeps truncated snapshot flag', () => {
+    const spec = parseChartSpec({
+      feasible: true,
+      summary: '按地区统计',
+      source_row_count: 100,
+      source_truncated: true,
+      charts: [
+        {
+          title: '各地区用户数',
+          type: 'bar',
+          categories: ['金华'],
+          series: [{ name: '用户数', values: [2] }],
+        },
+      ],
+    });
+    expect(spec.sourceTruncated).toBe(true);
+    expect(spec.sourceRowCount).toBe(100);
   });
 
   it('keeps chart palettes from payload', () => {

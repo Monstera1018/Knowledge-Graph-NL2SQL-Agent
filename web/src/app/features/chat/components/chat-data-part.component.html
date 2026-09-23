@@ -162,6 +162,9 @@
           }
         </p>
       }
+      @if (chartSpec().sourceTruncated) {
+        <p class="chat-part__truncated">结果已截断，图中数字仅基于返回的 {{ chartSpec().sourceRowCount }} 行</p>
+      }
       @for (chart of chartSpec().charts; track $index) {
         <section class="chat-part__chart-item">
           <div class="chat-part__chart-item-head">
@@ -188,6 +191,9 @@
       </div>
       @if (reportSummary()) {
         <p class="chat-part__chart-summary">{{ reportSummary() }}</p>
+      }
+      @if (reportSourceTruncated()) {
+        <p class="chat-part__truncated">结果已截断，报告中的数字仅基于返回的 {{ reportSourceRowCount() }} 行</p>
       }
       @if (reportDownloadable()) {
         <div class="chat-part__result-foot">

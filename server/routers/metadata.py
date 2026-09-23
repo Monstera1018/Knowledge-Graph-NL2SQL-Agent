@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from tools.graph import (
@@ -38,9 +38,12 @@ from tools.graph import (
     update_sql,
     update_table,
 )
+from tools.db import get_sql_read_dialect
+from tools.graph.crud.sql import upsert_llm_generated_sql
 from server.schemas.common import Page
 from server.auth.deps import get_workspace_id
 from tools.graph.model import ColumnNode, EnumListItem, EnumNode, KnowledgeNode, SQLNode, TableNode
+from tools.knowledge_extract import maybe_extract_knowledge_from_sql
 
 # ---------------------------------------------------------------------------
 # 数据模型
@@ -111,6 +114,8 @@ class KnowledgeUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     relations: list[KnowledgeRelationBody] | None = None
+    enabled: bool | None = None
+    review_status: str | None = None
 
 
 class KnowledgeRelationView(BaseModel):
@@ -123,6 +128,12 @@ class KnowledgeDetail(BaseModel):
     type: str
     name: str
     description: str = ""
+    source: str = "import"
+    enabled: bool = True
+    review_status: str = "approved"
+    source_sql_uuid: str = ""
+    created_at: str = ""
+    updated_at: str = ""
     relations: list[KnowledgeRelationView] = Field(default_factory=list)
 
 
@@ -133,12 +144,29 @@ class SQLCreate(BaseModel):
     dialect: str = ""
 
 
+class SQLPrecipitateBody(BaseModel):
+    name: str = Field(min_length=1)
+    logic: str = ""
+    content: str = Field(min_length=1)
+    dialect: str = ""
+
+
+class SQLPrecipitateResult(BaseModel):
+    action: str
+    uuid: str
+    name: str
+    source: str
+    review_status: str
+    enabled: bool
+
+
 class SQLUpdate(BaseModel):
     name: str | None = None
     logic: str | None = None
     content: str | None = None
     dialect: str | None = None
     enabled: bool | None = None
+    review_status: str | None = None
 
 
 class SQLDetail(BaseModel):
@@ -150,6 +178,8 @@ class SQLDetail(BaseModel):
     dialect: str = ""
     source: str = "import"
     enabled: bool = True
+    review_status: str = "approved"
+    knowledge_extracted: bool = True
     created_at: str = ""
     updated_at: str = ""
     relations: list[KnowledgeRelationView] = Field(default_factory=list)
@@ -468,9 +498,22 @@ async def list_knowledge_items(
         page: int = Query(1, ge=1),
         page_size: int = Query(MAX_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
         q: str | None = Query(None, description="按名称/描述搜索"),
+        source: str | None = Query(None, description="import 或 llm"),
+        enabled: bool | None = Query(None, description="是否用于问数检索"),
+        review_status: str | None = Query(None, description="pending 或 approved"),
+        sort: str | None = Query(None, description="time_desc、time_asc 或 name"),
         workspace_id: str = Depends(get_workspace_id),
 ) -> Page[KnowledgeNode]:
-    result = await list_knowledge(workspace_id=workspace_id, page=page, page_size=page_size, q=q)
+    result = await list_knowledge(
+        workspace_id=workspace_id,
+        page=page,
+        page_size=page_size,
+        q=q,
+        source=source,
+        enabled=enabled,
+        review_status=review_status,
+        sort=sort,
+    )
     return Page(
         items=result.items,
         total=result.total,
@@ -504,6 +547,12 @@ async def get_knowledge_item(
         type=node.type,
         name=node.name,
         description=node.description,
+        source=str(node.source),
+        enabled=bool(node.enabled),
+        review_status=str(node.review_status),
+        source_sql_uuid=node.source_sql_uuid or "",
+        created_at=node.created_at or "",
+        updated_at=node.updated_at or "",
         relations=[
             KnowledgeRelationView(
                 table_name=relation.table_name,
@@ -532,6 +581,8 @@ async def update_knowledge_item(
         name=body.name,
         description=body.description,
         relations=relations,
+        enabled=body.enabled,
+        review_status=body.review_status,
     )
 
 
@@ -548,9 +599,10 @@ async def delete_knowledge_item(
 async def list_sql_items(
         page: int = Query(1, ge=1),
         page_size: int = Query(MAX_LIST_PAGE_SIZE, ge=1, le=MAX_LIST_PAGE_SIZE),
-        q: str | None = Query(None, description="按名称/逻辑/内容/方言搜索"),
+        q: str | None = Query(None, description="按名称/逻辑/内容/语法搜索"),
         source: str | None = Query(None, description="import 或 llm"),
         enabled: bool | None = Query(None, description="是否用于 SQL 生成"),
+        review_status: str | None = Query(None, description="pending 或 approved"),
         sort: str | None = Query(None, description="time_desc、time_asc 或 name"),
         workspace_id: str = Depends(get_workspace_id),
 ) -> Page[SQLNode]:
@@ -561,6 +613,7 @@ async def list_sql_items(
         q=q,
         source=source,
         enabled=enabled,
+        review_status=review_status,
         sort=sort,
     )
     return Page(
@@ -585,6 +638,37 @@ async def create_sql_item(
     )
 
 
+@sqls_router.post("/precipitate", response_model=SQLPrecipitateResult, status_code=201)
+async def precipitate_sql_item(
+        body: SQLPrecipitateBody,
+        workspace_id: str = Depends(get_workspace_id),
+) -> SQLPrecipitateResult:
+    dialect = (body.dialect or "").strip() or get_sql_read_dialect()
+    try:
+        node, action = await upsert_llm_generated_sql(
+            workspace_id,
+            question=body.name,
+            logic=body.logic,
+            content=body.content,
+            dialect=dialect,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if message.startswith("Cannot add edge"):
+            message = "SQL 引用的表或字段不在当前数据目录中，无法沉淀"
+        raise HTTPException(status_code=400, detail=message) from exc
+    if node is None:
+        raise HTTPException(status_code=400, detail="名称和 SQL 不能为空")
+    return SQLPrecipitateResult(
+        action=action,
+        uuid=node.uuid,
+        name=node.name,
+        source=str(node.source),
+        review_status=str(node.review_status),
+        enabled=bool(node.enabled),
+    )
+
+
 @sqls_router.get("/{uuid}", response_model=SQLDetail)
 async def get_sql_item(
         uuid: str,
@@ -601,6 +685,8 @@ async def get_sql_item(
         dialect=node.dialect,
         source=str(node.source),
         enabled=bool(node.enabled),
+        review_status=str(node.review_status),
+        knowledge_extracted=bool(node.knowledge_extracted),
         created_at=node.created_at or "",
         updated_at=node.updated_at or "",
         relations=[
@@ -619,8 +705,8 @@ async def update_sql_item(
         body: SQLUpdate,
         workspace_id: str = Depends(get_workspace_id),
 ) -> SQLNode:
-    _assert_workspace(await get_sql(uuid), workspace_id)
-    return await update_sql(
+    current = _assert_workspace(await get_sql(uuid), workspace_id)
+    updated = await update_sql(
         workspace_id,
         uuid,
         name=body.name,
@@ -628,7 +714,10 @@ async def update_sql_item(
         content=body.content,
         dialect=body.dialect,
         enabled=body.enabled,
+        review_status=body.review_status,
+        preserve_uuid=True,
     )
+    return await maybe_extract_knowledge_from_sql(workspace_id, current, updated)
 
 
 @sqls_router.delete("/{uuid}", status_code=204)

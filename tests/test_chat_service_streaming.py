@@ -1,5 +1,6 @@
 import json
 import unittest
+import asyncio
 from types import SimpleNamespace
 
 from server.chat.service import (
@@ -7,6 +8,7 @@ from server.chat.service import (
     _iter_event_text_chunks,
     _merge_stage_chunk,
     _should_replace_sql_stream_with_final,
+    _user_facing_runtime_error,
 )
 
 
@@ -234,6 +236,58 @@ class ChatServiceTextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(report_payloads), 1)
         self.assertTrue(report_payloads[0].get("file_id"))
         self.assertNotIn("本次未返回可展示文本", visible_text)
+
+
+class UserFacingRuntimeErrorTest(unittest.TestCase):
+    def test_rate_limit_during_query_does_not_mention_report(self) -> None:
+        message = _user_facing_runtime_error(
+            Exception("System protection triggered by request burst"),
+            stage="table_selector",
+        )
+        self.assertIn("这次问数还没完成", message)
+        self.assertNotIn("生成分析报告", message)
+        self.assertNotIn("出图", message)
+
+    def test_rate_limit_during_report_keeps_snapshot_hint(self) -> None:
+        message = _user_facing_runtime_error(
+            Exception("System protection triggered by request burst"),
+            stage="report_planner",
+        )
+        self.assertIn("分析报告还没生成完", message)
+        self.assertIn("生成分析报告", message)
+
+    def test_rate_limit_during_chart_keeps_snapshot_hint(self) -> None:
+        message = _user_facing_runtime_error(
+            Exception("System protection triggered by request burst"),
+            stage="chart_planner",
+        )
+        self.assertIn("分析图表还没生成完", message)
+        self.assertNotIn("生成分析报告", message)
+
+    def test_non_quota_error_keeps_original_text(self) -> None:
+        self.assertEqual(
+            _user_facing_runtime_error(Exception("内部错误")),
+            "内部错误",
+        )
+
+
+class RuntimeHeartbeatTest(unittest.IsolatedAsyncioTestCase):
+    async def test_idle_runtime_emits_heartbeat_then_event(self) -> None:
+        from server.chat.service import iter_runtime_events_with_heartbeat
+
+        async def delayed():
+            await asyncio.sleep(0.08)
+            yield SimpleNamespace(name="ok")
+
+        items = [
+            item
+            async for item in iter_runtime_events_with_heartbeat(
+                delayed(),
+                idle_seconds=0.02,
+            )
+        ]
+        self.assertTrue(any(item is None for item in items))
+        self.assertEqual(items[-1].name, "ok")
 
 
 if __name__ == "__main__":

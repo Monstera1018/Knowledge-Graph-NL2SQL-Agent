@@ -206,6 +206,55 @@ class ReportMaterializeTest(unittest.TestCase):
             media_count = sum(1 for name in archive.namelist() if name.startswith("word/media/"))
         self.assertGreaterEqual(media_count, 2)
 
+    def test_invalid_model_text_falls_back_to_snapshot(self):
+        payload = materialize_analysis_report(
+            "不是 JSON，也没有报告方案",
+            _jinhua_snapshot(),
+            user_request="进一步生成分析报告",
+        )
+        self.assertTrue(payload["feasible"])
+        self.assertTrue(payload["overview"])
+        self.assertGreaterEqual(len(payload["analyses"]), 1)
+        self.assertTrue(payload["file_id"])
+
+    def test_unescaped_newlines_in_json_still_parse(self):
+        raw = """{
+  "feasible": true,
+  "title": "金华未结清报告",
+  "overview": "第一段
+第二段",
+  "analyses": [
+    {"heading": "按所属区县分布", "narrative": "义乌最多。"}
+  ],
+  "conclusions": "义乌应作为催缴重点。"
+}"""
+        payload = materialize_analysis_report(raw, _jinhua_snapshot(), write_file=False)
+        self.assertTrue(payload["feasible"])
+        self.assertIn("第一段", payload["overview"])
+        self.assertEqual(payload["analyses"][0]["heading"], "按所属区县分布")
+        self.assertTrue(payload["analyses"][0].get("chart"))
+
+    def test_reuses_last_charts_when_plan_missing(self):
+        last_chart = {
+            "feasible": True,
+            "charts": [{
+                "title": "各地市供电公司有效工单",
+                "type": "pie",
+                "categories": ["国网杭州供电公司", "国网宁波供电公司"],
+                "series": [{"name": "数量", "values": [40, 30]}],
+            }],
+        }
+        payload = materialize_analysis_report(
+            "",
+            _jinhua_snapshot(),
+            user_request="进一步生成分析报告",
+            last_chart=last_chart,
+            write_file=False,
+        )
+        self.assertTrue(payload["feasible"])
+        self.assertEqual(payload["analyses"][0]["heading"], "各地市供电公司有效工单")
+        self.assertEqual(payload["analyses"][0]["chart"]["categories"][0], "国网杭州供电公司")
+
     def test_write_report_without_charts_still_has_sections(self):
         dest = self.tmp / "plain.docx"
         write_report_docx(

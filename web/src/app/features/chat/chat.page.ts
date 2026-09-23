@@ -109,6 +109,17 @@ export class ChatPage {
   }
 
   protected readonly hasMessages = computed(() => this.messages().length > 0);
+
+  protected questionBefore(index: number): string {
+    const items = this.messages();
+    for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+      const item = items[cursor];
+      if (item.role === 'user') {
+        return item.content.trim();
+      }
+    }
+    return '';
+  }
   protected readonly showScrollDown = signal(false);
   protected readonly traceSidebarOpen = signal(false);
 

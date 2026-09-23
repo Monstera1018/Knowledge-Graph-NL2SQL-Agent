@@ -16,6 +16,7 @@ import {
   Page,
   SQLDetail,
   SQLNode,
+  SQLPrecipitateResult,
   TableJoinRelation,
   TableNode,
 } from '../models/metadata.models';
@@ -27,6 +28,7 @@ export interface ListQuery {
   column_uuid?: string;
   source?: string;
   enabled?: boolean | string;
+  review_status?: string;
   sort?: string;
 }
 
@@ -152,6 +154,8 @@ export class MetadataApiService {
       name?: string;
       description?: string;
       relations?: KnowledgeRelation[];
+      enabled?: boolean;
+      review_status?: string;
     },
   ): Observable<KnowledgeNode> {
     return this.http.put<KnowledgeNode>(`/api/knowledge/${uuid}`, body);
@@ -173,9 +177,13 @@ export class MetadataApiService {
     return this.http.post<SQLNode>('/api/sqls', body);
   }
 
+  precipitateSql(body: Pick<SQLNode, 'name' | 'logic' | 'content'> & { dialect?: string }): Observable<SQLPrecipitateResult> {
+    return this.http.post<SQLPrecipitateResult>('/api/sqls/precipitate', body);
+  }
+
   updateSql(
     uuid: string,
-    body: Partial<Pick<SQLNode, 'name' | 'logic' | 'content' | 'dialect' | 'enabled'>>,
+    body: Partial<Pick<SQLNode, 'name' | 'logic' | 'content' | 'dialect' | 'enabled' | 'review_status'>>,
   ): Observable<SQLNode> {
     return this.http.put<SQLNode>(`/api/sqls/${uuid}`, body);
   }
@@ -210,6 +218,7 @@ export class MetadataApiService {
     if (query.enabled !== undefined && query.enabled !== '') {
       params = params.set('enabled', String(query.enabled));
     }
+    if (query.review_status) params = params.set('review_status', query.review_status);
     if (query.sort) params = params.set('sort', query.sort);
     return params;
   }

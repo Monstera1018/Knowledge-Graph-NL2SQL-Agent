@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from tools.graph.internal import _run_read, build_stable_column_uuid, build_stable_table_uuid
 from tools.graph.model import EdgeType, NodeType
 from tools.graph.crud.knowledge import get_knowledge, list_knowledge_relations
+from tools.sql_similarity import extract_sql_tables
 from tools.vector import VectorSearchHit, semantic_search
 
 
@@ -446,6 +447,47 @@ def _table_name_from_ref(ref: str) -> str:
     return text.split(".", 1)[0].strip()
 
 
+def _bare_table_name(name: str) -> str:
+    text = (name or "").strip().lower()
+    if not text:
+        return ""
+    return text.split(".")[-1].strip()
+
+
+def sql_entry_table_names(entry: SqlEntry) -> Set[str]:
+    """从图谱 USES 与 SQL 正文收集样例涉及的物理表名。"""
+    names: Set[str] = set()
+    for ref in entry.related_tables or []:
+        table = _bare_table_name(_table_name_from_ref(ref))
+        if table:
+            names.add(table)
+    for raw in extract_sql_tables(entry.content, entry.dialect):
+        table = _bare_table_name(raw)
+        if table:
+            names.add(table)
+    return names
+
+
+def sql_entry_involves_tables(entry: SqlEntry, table_names: Sequence[str]) -> bool:
+    """样例是否用到本轮任一候选表。"""
+    selected = {
+        _bare_table_name(name)
+        for name in table_names
+        if _bare_table_name(name)
+    }
+    if not selected:
+        return False
+    return bool(sql_entry_table_names(entry) & selected)
+
+
+def filter_sql_entries_by_tables(
+        entries: Sequence[SqlEntry],
+        table_names: Sequence[str],
+) -> List[SqlEntry]:
+    """去掉未涉及本轮任一候选表的 SQL 样例。"""
+    return [entry for entry in entries if sql_entry_involves_tables(entry, table_names)]
+
+
 async def _sql_entries_from_rows(
         rows: Sequence[dict],
         *,
@@ -670,11 +712,17 @@ async def load_selected_tables_bundle(
 
     joins = await _fetch_joins(list(tables.keys()))
     knowledge = await _fetch_knowledge_entries(list(extra_knowledge_uuids or []), anchor_uuids)
-    hit_sql_entries = await _load_sql_entries_by_uuids(
-        list(extra_sql_uuids or []),
-        from_hit=True,
+    hit_sql_entries = filter_sql_entries_by_tables(
+        await _load_sql_entries_by_uuids(
+            list(extra_sql_uuids or []),
+            from_hit=True,
+        ),
+        names,
     )
-    graph_sql_entries = await _fetch_sql_entries(anchor_uuids)
+    graph_sql_entries = filter_sql_entries_by_tables(
+        await _fetch_sql_entries(anchor_uuids),
+        names,
+    )
     sql_entries = merge_sql_entries(hit_sql_entries, graph_sql_entries)
 
     sorted_tables = sorted(tables.values(), key=lambda t: t.name)

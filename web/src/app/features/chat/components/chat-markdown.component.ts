@@ -9,8 +9,11 @@ import {
   input,
 } from '@angular/core';
 import { MarkdownComponent } from 'ngx-markdown';
+import { MatDialog } from '@angular/material/dialog';
 
 import { highlightCode } from '../../../shared/utils/code-highlight';
+import { buildSqlPrecipitateDraft } from '../sql-precipitate';
+import { ChatSqlPrecipitateDialogComponent } from './chat-sql-precipitate-dialog.component';
 
 @Component({
   selector: 'app-chat-markdown',
@@ -26,11 +29,16 @@ import { highlightCode } from '../../../shared/utils/code-highlight';
 })
 export class ChatMarkdownComponent {
   private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly dialog = inject(MatDialog);
   readonly content = input.required<string>();
   /** Only enable in main chat result text; trace/debug markdown should stay plain. */
   readonly enhanceQueryCards = input(false);
   /** Skip heavy DOM enhancement while the assistant message is still streaming. */
   readonly streaming = input(false);
+  /** 仅助手正文里的 SQL 代码块显示沉淀按钮。 */
+  readonly allowSqlPrecipitate = input(false);
+  /** 本轮用户问题，用作沉淀样例的默认名称。 */
+  readonly precipitateName = input('');
 
   constructor() {
     afterNextRender(() => {
@@ -42,6 +50,8 @@ export class ChatMarkdownComponent {
     effect(() => {
       this.content();
       this.enhanceQueryCards();
+      this.allowSqlPrecipitate();
+      this.precipitateName();
       if (this.streaming()) {
         return;
       }
@@ -68,16 +78,16 @@ export class ChatMarkdownComponent {
   private enhanceCodeBlocks(): void {
     const root = this.host.nativeElement;
     root.querySelectorAll('pre').forEach((pre: HTMLPreElement) => {
+      const code = pre.querySelector('code');
+      const langMatch = (code?.className ?? pre.className).match(/language-([\w-]+)/);
+      const lang = (langMatch?.[1] ?? 'text').toUpperCase();
       const plainText = this.highlightPreCode(pre);
+      const text = plainText ?? code?.textContent ?? pre.textContent ?? '';
 
       if (pre.closest('.chat-code-block')) {
+        this.ensureSqlPrecipitateButton(pre, text, lang);
         return;
       }
-
-      const code = pre.querySelector('code');
-      const langMatch = code?.className.match(/language-([\w-]+)/);
-      const lang = (langMatch?.[1] ?? 'text').toUpperCase();
-      const text = plainText ?? code?.textContent ?? pre.textContent ?? '';
 
       const block = document.createElement('div');
       block.className = 'chat-code-block';
@@ -89,32 +99,90 @@ export class ChatMarkdownComponent {
       label.className = 'chat-code-block__lang';
       label.textContent = lang;
 
-      const copyBtn = document.createElement('button');
-      copyBtn.type = 'button';
-      copyBtn.className = 'chat-code-block__copy';
-      copyBtn.setAttribute('aria-label', '复制代码');
-      copyBtn.innerHTML =
-        '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          copyBtn.classList.add('is-copied');
-          copyBtn.innerHTML =
-            '<span class="material-symbols-outlined" aria-hidden="true">check</span>';
-          window.setTimeout(() => {
-            copyBtn.classList.remove('is-copied');
-            copyBtn.innerHTML =
-              '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
-          }, 1600);
-        } catch {
-          /* 忽略剪贴板写入失败 */
-        }
-      });
-
-      header.append(label, copyBtn);
+      header.append(label, this.createCodeActions(text, lang));
       pre.parentNode?.insertBefore(block, pre);
       block.append(header, pre);
     });
+  }
+
+  private createCodeActions(text: string, lang: string): HTMLDivElement {
+    const actions = document.createElement('div');
+    actions.className = 'chat-code-block__actions';
+    const precipitate = this.createSqlPrecipitateButton(text, lang);
+    if (precipitate) {
+      actions.append(precipitate);
+    }
+    actions.append(this.createCopyButton(text));
+    return actions;
+  }
+
+  private ensureSqlPrecipitateButton(pre: HTMLPreElement, text: string, lang: string): void {
+    const header = pre.parentElement?.querySelector(':scope > .chat-code-block__header');
+    const actions = header?.querySelector('.chat-code-block__actions');
+    if (!actions || actions.querySelector('.chat-code-block__precipitate')) {
+      return;
+    }
+    const button = this.createSqlPrecipitateButton(text, lang);
+    if (!button) {
+      return;
+    }
+    const copy = actions.querySelector('.chat-code-block__copy');
+    if (copy) {
+      actions.insertBefore(button, copy);
+    } else {
+      actions.append(button);
+    }
+  }
+
+  private createSqlPrecipitateButton(text: string, lang: string): HTMLButtonElement | null {
+    if (!this.allowSqlPrecipitate() || lang.toLowerCase() !== 'sql' || !text.trim()) {
+      return null;
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chat-code-block__copy chat-code-block__precipitate';
+    button.setAttribute('aria-label', '沉淀为历史 SQL');
+    button.title = '沉淀为历史 SQL';
+    button.innerHTML =
+      '<span class="material-symbols-outlined" aria-hidden="true">bookmark_add</span>';
+    button.addEventListener('click', () => {
+      this.dialog.open(ChatSqlPrecipitateDialogComponent, {
+        data: buildSqlPrecipitateDraft(this.content(), text, this.precipitateName()),
+        panelClass: 'app-sql-precipitate-dialog-panel',
+        backdropClass: 'app-dialog-backdrop',
+        autoFocus: 'first-tabbable',
+        restoreFocus: true,
+        width: 'min(40rem, calc(100vw - 2rem))',
+        maxWidth: 'calc(100vw - 2rem)',
+        maxHeight: '86vh',
+      });
+    });
+    return button;
+  }
+
+  private createCopyButton(text: string): HTMLButtonElement {
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'chat-code-block__copy';
+    copyBtn.setAttribute('aria-label', '复制代码');
+    copyBtn.innerHTML =
+      '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.classList.add('is-copied');
+        copyBtn.innerHTML =
+          '<span class="material-symbols-outlined" aria-hidden="true">check</span>';
+        window.setTimeout(() => {
+          copyBtn.classList.remove('is-copied');
+          copyBtn.innerHTML =
+            '<span class="material-symbols-outlined" aria-hidden="true">content_copy</span>';
+        }, 1600);
+      } catch {
+        /* 忽略剪贴板写入失败 */
+      }
+    });
+    return copyBtn;
   }
 
   private highlightPreCode(pre: HTMLPreElement): string {

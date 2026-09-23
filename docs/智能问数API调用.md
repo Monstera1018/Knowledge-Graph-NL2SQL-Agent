@@ -19,7 +19,7 @@
   → table_selector   仅从候选表白名单选物理表名
   → load_sql_schema_context  加载已选表的完整字段/枚举/知识/JOIN/历史 SQL
   → sql_generator    生成中文说明 + SQL 代码块
-  → validate_sql     只读/安全/表字段/方言校验（失败最多重试 3 次）
+  → validate_sql     只读/安全/表字段/语法校验（失败最多重试 3 次）
   → execute_sql      在业务库执行已校验 SQL，返回 Markdown 表格
 ```
 

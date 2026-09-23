@@ -24,6 +24,27 @@ export const sqlIsEnabled = (item: Pick<SQLNode, 'enabled'> | null | undefined):
   return item?.enabled !== false;
 };
 
+export const sqlIsPending = (
+  item: Pick<SQLNode, 'review_status' | 'source' | 'enabled'> | null | undefined,
+): boolean => {
+  if (!item) {
+    return false;
+  }
+  if (item.review_status === 'pending') {
+    return true;
+  }
+  if (item.review_status === 'approved') {
+    return false;
+  }
+  return item.source === 'llm' && item.enabled === false;
+};
+
+export const sqlReviewLabel = (
+  item: Pick<SQLNode, 'review_status' | 'source' | 'enabled'> | null | undefined,
+): string => {
+  return sqlIsPending(item) ? '待审核' : '已审核';
+};
+
 export const sqlTimeLabel = (
   item: Pick<SQLNode, 'updated_at' | 'created_at'> | null | undefined,
 ): string => {

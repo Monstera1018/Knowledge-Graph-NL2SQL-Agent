@@ -32,6 +32,11 @@ import {
   KnowledgeRelationDraft,
   cloneRelations,
   emptyKnowledgeForm,
+  knowledgeIsEnabled,
+  knowledgeIsPending,
+  knowledgeReviewLabel,
+  knowledgeSourceLabel,
+  knowledgeTimeLabel,
   relationsFromGraph,
 } from './knowledge.models';
 
@@ -63,6 +68,11 @@ export class KnowledgePage {
   protected readonly refreshing = signal(false);
   protected readonly query = signal('');
   protected readonly total = signal(0);
+  protected readonly sourceFilter = signal('');
+  protected readonly statusFilter = signal('');
+  protected readonly sort = signal('time_desc');
+  protected readonly togglingUuid = signal<string | null>(null);
+  protected readonly reviewingUuid = signal<string | null>(null);
   protected readonly selected = signal<KnowledgeNode | null>(null);
   protected readonly relations = signal<KnowledgeRelationDraft[]>([]);
   protected readonly relationsLoading = signal(false);
@@ -110,7 +120,7 @@ export class KnowledgePage {
         distinctUntilChanged(),
         switchMap((q) => {
           this.loading.set(true);
-          return this.api.listKnowledge(listAllQuery({ q: q || undefined })).pipe(
+          return this.api.listKnowledge(this.buildListQuery(q)).pipe(
             catchError((err) => {
               this.loading.set(false);
               this.handleError('加载知识条目失败', err);
@@ -133,6 +143,21 @@ export class KnowledgePage {
   protected onQueryChange(value: string): void {
     this.query.set(value);
     this.search$.next(value);
+  }
+
+  protected onSourceFilterChange(value: string): void {
+    this.sourceFilter.set(value);
+    this.fetchItems();
+  }
+
+  protected onStatusFilterChange(value: string): void {
+    this.statusFilter.set(value);
+    this.fetchItems();
+  }
+
+  protected onSortChange(value: string): void {
+    this.sort.set(value || 'time_desc');
+    this.fetchItems();
   }
 
   protected selectItem(item: KnowledgeNode): void {
@@ -305,6 +330,134 @@ export class KnowledgePage {
     this.formDraft.update((draft) => ({ ...draft, [field]: value }));
   }
 
+  protected sourceLabel(item: KnowledgeNode | null): string {
+    return knowledgeSourceLabel(item);
+  }
+
+  protected isEnabled(item: KnowledgeNode | null): boolean {
+    return knowledgeIsEnabled(item);
+  }
+
+  protected isPending(item: KnowledgeNode | null): boolean {
+    return knowledgeIsPending(item);
+  }
+
+  protected reviewLabel(item: KnowledgeNode | null): string {
+    return knowledgeReviewLabel(item);
+  }
+
+  protected timeLabel(item: KnowledgeNode | null): string {
+    return knowledgeTimeLabel(item);
+  }
+
+  protected toggleEnabled(event: Event, item: KnowledgeNode): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (knowledgeIsPending(item) || this.togglingUuid() === item.uuid) {
+      return;
+    }
+    const nextEnabled = !knowledgeIsEnabled(item);
+    this.togglingUuid.set(item.uuid);
+    this.api
+      .updateKnowledge(item.uuid, { enabled: nextEnabled })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.togglingUuid.set(null);
+          this.applySavedKnowledge(saved);
+          this.snack.success(nextEnabled ? '已启用，将用于问数检索' : '已停用，不再用于问数检索');
+        },
+        error: (err) => {
+          this.togglingUuid.set(null);
+          this.handleError('更新启用状态失败', err);
+        },
+      });
+  }
+
+  protected async approveItem(event: Event, item: KnowledgeNode): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!knowledgeIsPending(item) || this.reviewingUuid() === item.uuid) {
+      return;
+    }
+    const confirmed = await this.confirmDialog.confirm({
+      title: '审核通过',
+      message: `通过「${item.name}」后将启用该知识，并写入问数检索。反复启用/停用不会再次抽取。`,
+      confirmLabel: '通过',
+    });
+    if (!confirmed) {
+      return;
+    }
+    this.reviewingUuid.set(item.uuid);
+    this.api
+      .updateKnowledge(item.uuid, { review_status: 'approved' })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.reviewingUuid.set(null);
+          this.fetchItems(this.query());
+          if (this.selected()?.uuid === saved.uuid) {
+            this.selected.update((current) => (current ? { ...current, ...saved } : saved));
+          }
+          this.snack.success('已通过并启用，将用于问数检索');
+        },
+        error: (err) => {
+          this.reviewingUuid.set(null);
+          this.handleError('审核通过失败', err);
+        },
+      });
+  }
+
+  protected async rejectItem(event: Event, item: KnowledgeNode): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!knowledgeIsPending(item) || this.reviewingUuid() === item.uuid) {
+      return;
+    }
+    const confirmed = await this.confirmDialog.confirm({
+      title: '审核不通过',
+      message: `不通过将删除待审核知识「${item.name}」，不可恢复。`,
+      confirmLabel: '删除',
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    this.reviewingUuid.set(item.uuid);
+    this.api
+      .deleteKnowledge(item.uuid)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.reviewingUuid.set(null);
+          if (this.selected()?.uuid === item.uuid) {
+            this.selected.set(null);
+            this.relations.set([]);
+            this.formMode.set('view');
+            this.formDraft.set(emptyKnowledgeForm());
+            this.detailView.set('detail');
+            this.overviewSnapshot.set(null);
+            this.graphSnapshot.set(null);
+          }
+          this.fetchItems(this.query());
+          this.snack.success('已删除未通过的知识条目');
+        },
+        error: (err) => {
+          this.reviewingUuid.set(null);
+          this.handleError('删除失败', err);
+        },
+      });
+  }
+
+  private applySavedKnowledge(saved: KnowledgeNode): void {
+    this.items.update((items) =>
+      items.map((row) => (row.uuid === saved.uuid ? { ...row, ...saved } : row)),
+    );
+    if (this.selected()?.uuid === saved.uuid) {
+      this.selected.update((current) => (current ? { ...current, ...saved } : saved));
+    }
+  }
+
   protected openRelationDialog(editIndex?: number): void {
     const relations = this.formDraft().relations;
     const mode = editIndex === undefined ? 'add' : 'edit';
@@ -439,11 +592,11 @@ export class KnowledgePage {
       });
   }
 
-  private fetchItems(q = ''): void {
+  private fetchItems(q = this.query()): void {
     const requestId = this.listGuard.next();
     this.loading.set(true);
     this.api
-      .listKnowledge(listAllQuery({ q: q || undefined }))
+      .listKnowledge(this.buildListQuery(q))
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (page) => {
@@ -509,6 +662,17 @@ export class KnowledgePage {
           this.handleError('加载关系图谱失败', err);
         },
       });
+  }
+
+  private buildListQuery(q = this.query()) {
+    const status = this.statusFilter();
+    return listAllQuery({
+      q: q.trim() || undefined,
+      source: this.sourceFilter() || undefined,
+      enabled: status === 'enabled' ? true : status === 'disabled' ? false : undefined,
+      review_status: status === 'pending' ? 'pending' : status === 'disabled' ? 'approved' : undefined,
+      sort: this.sort() || 'time_desc',
+    });
   }
 
   private handleError(message: string, err: unknown): void {

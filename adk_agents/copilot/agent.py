@@ -27,6 +27,7 @@ from adk_agents.common import (
 )
 from adk_agents.copilot.helpers import (
     MAX_SQL_GENERATION_ATTEMPTS,
+    RETRIEVAL_CONTEXT_STATE_KEY,
     SQL_GENERATION_ATTEMPT_STATE_KEY,
     SQL_SCHEMA_CONTEXT_STATE_KEY,
     SQL_SELECTED_TABLE_DETAILS_STATE_KEY,
@@ -34,13 +35,19 @@ from adk_agents.copilot.helpers import (
     SQL_VALIDATED_SQL_STATE_KEY,
     SQL_GENERATOR_LOGIC_STATE_KEY,
     SQL_VALIDATION_FEEDBACK_STATE_KEY,
+    TABLE_RESELECT_ATTEMPT_STATE_KEY,
+    TABLE_RESELECT_FEEDBACK_STATE_KEY,
     EXTRACTOR_RESULT_STATE_KEY,
     MAX_PLANNER_TURNS,
     PLAN_OBSERVATION_STATE_KEY,
     PLAN_STATE_KEY,
     PLAN_TURN_COUNT_STATE_KEY,
     QUERY_SNAPSHOT_FRESH_STATE_KEY,
+    GRAIN_REWRITE_STATE_KEY,
     NO_USABLE_TABLE_MESSAGE,
+    begin_grain_rewrite,
+    begin_table_reselect,
+    can_reselect_tables,
     clear_state_key,
     conversation_history_for_extractor,
     extract_sql_logic_from_output,
@@ -56,8 +63,10 @@ from adk_agents.copilot.helpers import (
     load_plan,
     load_plan_observation,
     load_plan_turn,
+    infer_snapshot_grain,
     load_query_snapshot,
     query_snapshot_is_fresh,
+    snapshot_is_truncated,
     extraction_from_node_input,
     extractor_result_has_content,
     resolve_user_message,
@@ -116,6 +125,10 @@ from tools.retrieval import (
     search_and_build_llm_context_with_hits,
 )
 from tools.sql import extract_sql_statements_from_text, validate_read_sql
+from tools.sql_provenance import (
+    format_health_feedback,
+    inspect_query_health,
+)
 from tools.common import to_litellm_model_name, require_non_empty_env
 
 logger = logging.getLogger(__name__)
@@ -196,11 +209,15 @@ def reset_sql_turn_state(ctx: Context, node_input: str) -> str:
             TABLE_CANDIDATES_STATE_KEY,
             RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY,
             RETRIEVED_SQL_UUIDS_STATE_KEY,
+            RETRIEVAL_CONTEXT_STATE_KEY,
+            TABLE_RESELECT_ATTEMPT_STATE_KEY,
+            TABLE_RESELECT_FEEDBACK_STATE_KEY,
             PLAN_STATE_KEY,
             PLAN_OBSERVATION_STATE_KEY,
             PLAN_TURN_COUNT_STATE_KEY,
             EXTRACTOR_RESULT_STATE_KEY,
             QUERY_SNAPSHOT_FRESH_STATE_KEY,
+            GRAIN_REWRITE_STATE_KEY,
     ):
         clear_state_key(ctx, key)
     return text_from_node_input(node_input)
@@ -280,6 +297,8 @@ def _build_plan_observation(
         "has_snapshot": bool(snapshot),
         "snapshot_columns": columns,
         "snapshot_row_count": row_count,
+        "snapshot_grain": str((snapshot or {}).get("grain") or infer_snapshot_grain(snapshot) or ""),
+        "snapshot_truncated": snapshot_is_truncated(snapshot),
     }
 
 
@@ -341,7 +360,21 @@ def route_after_plan(ctx: Context, node_input) -> Event:
         return Event(route="chart", output=extraction)
     if plan_next(plan) == PLAN_STEP_REPORT:
         return Event(route="report", output=extraction)
+    if _should_reuse_schema_for_grain_rewrite(ctx):
+        observation = load_plan_observation(ctx) or {}
+        begin_grain_rewrite(ctx, extra_feedback=str(observation.get("detail") or ""))
+        return Event(route="aggregate", output=extraction)
     return Event(output=extraction)
+
+
+def _should_reuse_schema_for_grain_rewrite(ctx: Context) -> bool:
+    """缺维度重查时复用本轮表结构，不再走检索和选表。"""
+    observation = load_plan_observation(ctx)
+    code = str((observation or {}).get("code") or "").strip()
+    if code not in {OBS_QUERY_SUCCESS, OBS_CHART_INFEASIBLE, OBS_REPORT_INFEASIBLE}:
+        return False
+    schema = (ctx.state.get(SQL_SCHEMA_CONTEXT_STATE_KEY) or "").strip()
+    return bool(schema and selected_table_names_from_state(ctx))
 
 
 def end_plan(ctx: Context, node_input=None) -> str:
@@ -352,7 +385,9 @@ def end_plan(ctx: Context, node_input=None) -> str:
 def observe_query_result(ctx: Context, node_input) -> Event:
     """问数管道结束后记录观察，供规划决定是否出图或结束。"""
     detail = text_from_node_input(node_input)
-    if query_snapshot_is_fresh(ctx) and load_query_snapshot(ctx):
+    snapshot = load_query_snapshot(ctx)
+    row_count = int((snapshot or {}).get("row_count") or 0) if snapshot else 0
+    if query_snapshot_is_fresh(ctx) and snapshot and row_count > 0:
         observation = _build_plan_observation(
             ctx,
             last_next=PLAN_STEP_QUERY,
@@ -501,6 +536,7 @@ async def prepare_report_planner_input(ctx: Context, node_input=None) -> Event:
     message = format_report_planner_user_message(
         user_request=resolve_user_message(ctx),
         snapshot=snapshot,
+        last_chart=load_last_chart_spec(ctx),
     )
     return Event(output=message)
 
@@ -520,6 +556,7 @@ def parse_report_spec(ctx: Context, node_input) -> str:
         text_from_node_input(node_input),
         snapshot,
         user_request=resolve_user_message(ctx),
+        last_chart=load_last_chart_spec(ctx),
     )
     save_last_report_spec(ctx, payload)
     if payload.get("feasible") and payload.get("analyses"):
@@ -584,6 +621,7 @@ async def search(
     retrieval_context = search_result.context
     table_candidates = _extract_table_candidates(retrieval_context)
     ctx.state[TABLE_CANDIDATES_STATE_KEY] = table_candidates
+    ctx.state[RETRIEVAL_CONTEXT_STATE_KEY] = retrieval_context
     ctx.state[RETRIEVED_KNOWLEDGE_UUIDS_STATE_KEY] = search_result.unbound_knowledge_hit_uuids
     ctx.state[RETRIEVED_SQL_UUIDS_STATE_KEY] = [
         str(item).strip()
@@ -601,9 +639,33 @@ async def search(
     )
 
 
-def prepare_table_selector_input(node_input: SearchStageOutput) -> str:
+def prepare_table_selector_input(ctx: Context, node_input=None) -> str:
     """将结构化检索结果转换为给大模型阅读的 Markdown，而不是 JSON。"""
-    return format_table_selector_user_message(node_input)
+    stage = node_input if isinstance(node_input, SearchStageOutput) else None
+    if stage is not None:
+        if stage.retrieval_context:
+            ctx.state[RETRIEVAL_CONTEXT_STATE_KEY] = stage.retrieval_context
+        if stage.table_candidates:
+            ctx.state[TABLE_CANDIDATES_STATE_KEY] = list(stage.table_candidates)
+        if stage.user_message:
+            save_user_message_to_state(ctx, stage.user_message)
+    else:
+        stage = SearchStageOutput(
+            user_message=resolve_user_message(ctx),
+            retrieval_context=str(ctx.state.get(RETRIEVAL_CONTEXT_STATE_KEY) or ""),
+            table_candidates=[
+                str(item).strip()
+                for item in (ctx.state.get(TABLE_CANDIDATES_STATE_KEY) or [])
+                if str(item).strip()
+            ],
+        )
+    feedback = str(ctx.state.get(TABLE_RESELECT_FEEDBACK_STATE_KEY) or "").strip()
+    previous_tables = selected_table_names_from_state(ctx) if feedback else []
+    return format_table_selector_user_message(
+        stage,
+        reselect_feedback=feedback,
+        previous_tables=previous_tables,
+    )
 
 
 table_selector = Agent(
@@ -710,6 +772,8 @@ async def load_sql_schema_context(
     clear_state_key(ctx, SQL_LAST_ATTEMPT_STATE_KEY)
     clear_state_key(ctx, SQL_VALIDATED_SQL_STATE_KEY)
     clear_state_key(ctx, SQL_GENERATOR_LOGIC_STATE_KEY)
+    clear_state_key(ctx, TABLE_RESELECT_FEEDBACK_STATE_KEY)
+    clear_state_key(ctx, GRAIN_REWRITE_STATE_KEY)
     return schema_text
 
 
@@ -811,6 +875,15 @@ def format_validation_failure_response(ctx: Context, node_input) -> str:
     return "\n".join(parts)
 
 
+def _health_route_message(errors: list[str] | tuple[str, ...], action: str) -> str:
+    lines = [item for item in errors if str(item).strip()]
+    parts = ["## 查询结果体检", ""]
+    if lines:
+        parts.extend([*(f"- {item}" for item in lines), ""])
+    parts.append(action)
+    return "\n".join(parts).strip()
+
+
 async def validate_sql(ctx: Context, node_input) -> Event:
     """校验生成的 SQL；失败且未达上限时路由回 sql_generator 重试。"""
     raw_text = text_from_node_input(node_input)
@@ -842,6 +915,19 @@ async def validate_sql(ctx: Context, node_input) -> Event:
     save_sql_last_attempt(ctx, raw_text)
 
     if attempt >= MAX_SQL_GENERATION_ATTEMPTS:
+        if can_reselect_tables(ctx):
+            begin_table_reselect(ctx, errors)
+            return Event(
+                route="reselect",
+                output=_validation_output(
+                    _validation_failure_payload(
+                        errors=errors,
+                        attempt=attempt,
+                        raw_text=raw_text,
+                        terminal=False,
+                    )
+                ),
+            )
         return Event(
             route="failed",
             output=_validation_output(
@@ -867,8 +953,8 @@ async def validate_sql(ctx: Context, node_input) -> Event:
     )
 
 
-async def execute_sql(ctx: Context, node_input) -> str:
-    """执行已校验 SQL，并返回 Markdown 查询结果。"""
+async def execute_sql(ctx: Context, node_input) -> Event:
+    """执行已校验 SQL；空结果或口径异常时改写 SQL 或重新选表，不把空表当成功。"""
     raw_text = text_from_node_input(node_input)
     sql_text = (ctx.state.get(SQL_VALIDATED_SQL_STATE_KEY) or "").strip()
     if not sql_text:
@@ -879,15 +965,17 @@ async def execute_sql(ctx: Context, node_input) -> str:
             candidate_table_names=selected_table_names_from_state(ctx),
         )
         if not ok:
-            return "SQL 校验未通过，无法执行查询：\n\n" + "\n".join(
-                f"- {err}" for err in errors
+            return Event(
+                output="SQL 校验未通过，无法执行查询：\n\n" + "\n".join(
+                    f"- {err}" for err in errors
+                )
             )
 
     statements, extract_err = extract_sql_statements_from_text(sql_text, SQL_DIALECT)
     if extract_err:
-        return f"无法解析待执行的 SQL：{extract_err}"
+        return Event(output=f"无法解析待执行的 SQL：{extract_err}")
     if not statements:
-        return "未找到可执行的 SQL 语句。"
+        return Event(output="未找到可执行的 SQL 语句。")
 
     max_rows = sql_execution_max_rows()
     result_sets: list[tuple[list[dict[str, object]], bool]] = []
@@ -897,19 +985,66 @@ async def execute_sql(ctx: Context, node_input) -> str:
             rows = await execute_read_sql(statement)
         except TimeoutError as exc:
             prefix = f"第 {index} 条 SQL " if len(statements) > 1 else ""
-            return f"{prefix}查询超时：{exc}"
+            return Event(output=f"{prefix}查询超时：{exc}")
         except Exception as exc:
             prefix = f"第 {index} 条 SQL " if len(statements) > 1 else ""
-            return f"{prefix}查询执行失败：{exc}"
+            return Event(output=f"{prefix}查询执行失败：{exc}")
 
         truncated = len(rows) > max_rows
         if truncated:
             rows = rows[:max_rows]
         result_sets.append((rows, truncated))
 
-    save_query_snapshot(ctx, result_sets)
+    row_count = sum(len(rows) for rows, _ in result_sets)
+    extraction = load_extractor_result(ctx)
+    health_question = "\n".join(
+        item for item in (
+            resolve_user_message(ctx),
+            extraction.retrieval_query,
+        ) if (item or "").strip()
+    )
+    health = inspect_query_health(
+        question=health_question,
+        sql="\n\n".join(statements),
+        row_count=row_count,
+        dialect=SQL_DIALECT,
+    )
+
+    if health.retry_sql:
+        attempt = int(ctx.state.get(SQL_GENERATION_ATTEMPT_STATE_KEY, 0)) + 1
+        ctx.state[SQL_GENERATION_ATTEMPT_STATE_KEY] = attempt
+        ctx.state[SQL_VALIDATION_FEEDBACK_STATE_KEY] = format_health_feedback(health.errors)
+        save_sql_last_attempt(ctx, sql_text)
+        if attempt < MAX_SQL_GENERATION_ATTEMPTS:
+            return Event(
+                route="retry",
+                output=_health_route_message(health.errors, "将改写 SQL 后重试。"),
+            )
+        if can_reselect_tables(ctx):
+            begin_table_reselect(ctx, list(health.errors))
+            return Event(
+                route="reselect",
+                output=_health_route_message(health.errors, "将重新选择数据表后重试。"),
+            )
+        return Event(output=_health_route_message(health.errors, "未能改写成符合问题口径的查询。"))
+
+    if health.reselect_tables:
+        if can_reselect_tables(ctx):
+            begin_table_reselect(ctx, list(health.errors))
+            return Event(
+                route="reselect",
+                output=_health_route_message(health.errors, "将重新选择数据表后重试。"),
+            )
+        return Event(output=format_sql_execution_response(statements, result_sets))
+
+    save_query_snapshot(
+        ctx,
+        result_sets,
+        sql="\n\n".join(statements),
+        dialect=SQL_DIALECT,
+    )
     await _precipitate_executed_sql(ctx, statements, result_sets)
-    return format_sql_execution_response(statements, result_sets)
+    return Event(output=format_sql_execution_response(statements, result_sets))
 
 
 async def _precipitate_executed_sql(
@@ -971,6 +1106,7 @@ root_agent = Workflow(
                 "chitchat": prepare_chitchat_input,
                 "chart": prepare_chart_planner_input,
                 "report": prepare_report_planner_input,
+                "aggregate": prepare_sql_generator_input,
                 DEFAULT_ROUTE: search,
             },
         ),
@@ -1032,6 +1168,7 @@ root_agent = Workflow(
             {
                 "retry": prepare_sql_generator_input,
                 "failed": format_validation_failure_response,
+                "reselect": prepare_table_selector_input,
                 DEFAULT_ROUTE: execute_sql,
             },
         ),
@@ -1042,6 +1179,13 @@ root_agent = Workflow(
         ),
         (
             execute_sql,
+            {
+                "retry": prepare_sql_generator_input,
+                "reselect": prepare_table_selector_input,
+                DEFAULT_ROUTE: observe_query_result,
+            },
+        ),
+        (
             observe_query_result,
             prepare_planner_input,
         ),

@@ -1,5 +1,5 @@
 @if (textPart(); as text) {
-  <app-chat-text-part [part]="text" [streaming]="streaming()" />
+  <app-chat-text-part [part]="text" [streaming]="streaming()" [question]="question()" />
 }
 @if (workflowPart(); as workflow) {
   <app-chat-workflow-part [part]="workflow" />

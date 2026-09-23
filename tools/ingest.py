@@ -415,10 +415,14 @@ async def import_knowledge(
                 related_columns = str_cell(row['相关列'])
                 related_table_and_column = _parse_related_table_and_column(related_tables, related_columns)
 
+                now = utc_now_iso()
                 await upsert_graph_node_tx(tx,
                                            KnowledgeNode(uuid=knowledge_uuid, type=NodeType.KNOWLEDGE,
                                                          name=knowledge_name,
-                                                         description=knowledge_description, workspace_id=workspace_id))
+                                                         description=knowledge_description, workspace_id=workspace_id,
+                                                         source="import", enabled=True,
+                                                         review_status="approved",
+                                                         created_at=now, updated_at=now))
 
                 for table_name, column_names in related_table_and_column.items():
                     for column_name in column_names:

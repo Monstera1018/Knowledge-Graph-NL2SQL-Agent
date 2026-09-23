@@ -247,7 +247,7 @@ function buildTableContextPart(parts: readonly ToolPart[]): ToolPart {
     name: 'table_context',
     phase,
     title: '确定数据表与表结构',
-    input: first.input ?? null,
+    input: parts[parts.length - 1]?.input ?? first.input ?? null,
     ...mergeToolTiming(parts),
     output: {
       stage: 'table_context',
