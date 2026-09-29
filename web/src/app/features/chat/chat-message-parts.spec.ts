@@ -282,6 +282,87 @@ describe('chat-message-parts', () => {
     });
   });
 
+  it('keeps later planner turns as separate timeline rows', () => {
+    const firstPlanner: ToolPart = {
+      kind: 'tool',
+      id: 't-planner-1',
+      name: 'planner',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { next: 'query' } },
+      duration_ms: 400,
+    };
+    const firstParsed: ToolPart = {
+      kind: 'tool',
+      id: 't-parse-1',
+      name: 'parse_plan',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { next: 'query', reason: '先查数' } },
+      duration_ms: 200,
+    };
+    const search: ToolPart = {
+      kind: 'tool',
+      id: 't-search',
+      name: 'search',
+      phase: 'result',
+      title: '检索上下文',
+      input: null,
+      output: { stage: 'search', status: 'ok' },
+      duration_ms: 3400,
+    };
+    const execute: ToolPart = {
+      kind: 'tool',
+      id: 't-execute',
+      name: 'execute_sql',
+      phase: 'result',
+      title: '执行 SQL',
+      input: null,
+      output: { stage: 'execute_sql', status: 'ok' },
+      duration_ms: 1900,
+    };
+    const secondPlanner: ToolPart = {
+      kind: 'tool',
+      id: 't-planner-2',
+      name: 'planner',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { next: 'chart' } },
+      duration_ms: 14000,
+    };
+    const secondParsed: ToolPart = {
+      kind: 'tool',
+      id: 't-parse-2',
+      name: 'parse_plan',
+      phase: 'result',
+      title: '规划步骤',
+      input: null,
+      output: { result: { next: 'chart', reason: '查询成功后再出图' } },
+      duration_ms: 300,
+    };
+    const merged = mergeDisplayToolParts([
+      firstPlanner,
+      firstParsed,
+      search,
+      execute,
+      secondPlanner,
+      secondParsed,
+    ]);
+    const planRows = merged.filter((part) => part.kind === 'tool' && part.name === 'task_plan');
+    expect(planRows).toHaveLength(2);
+    expect(merged.map((part) => (part.kind === 'tool' ? part.name : part.kind))).toEqual([
+      'task_plan',
+      'search',
+      'execute_sql',
+      'task_plan',
+    ]);
+    expect(planRows[0]?.kind === 'tool' && planRows[0].duration_ms).toBe(600);
+    expect(planRows[1]?.kind === 'tool' && planRows[1].duration_ms).toBe(14300);
+  });
+
   it('merges report planner tools into one analysis report node', () => {
     const prepare: ToolPart = {
       kind: 'tool',

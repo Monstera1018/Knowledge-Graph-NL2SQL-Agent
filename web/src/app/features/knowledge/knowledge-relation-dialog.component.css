@@ -1,7 +1,8 @@
 .knowledge-relation-dialog {
   display: flex;
   flex-direction: column;
-  max-height: min(32rem, calc(100vh - 8rem));
+  height: 100%;
+  max-height: min(48rem, calc(100vh - 4rem));
 }
 
 .knowledge-relation-dialog__header {
@@ -35,7 +36,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 0;
   flex: 1;
-  min-height: 18rem;
+  min-height: 28rem;
 }
 
 .knowledge-relation-dialog__tables {
@@ -47,6 +48,10 @@
 
 .knowledge-relation-dialog__search {
   margin: 0.75rem 0.75rem 0.5rem;
+}
+
+.knowledge-relation-dialog__column-search {
+  margin: 0 0 0.5rem;
 }
 
 .knowledge-relation-dialog__list {

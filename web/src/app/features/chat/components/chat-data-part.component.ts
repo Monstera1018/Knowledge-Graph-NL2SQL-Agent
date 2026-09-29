@@ -13,7 +13,13 @@ import {
 } from '../chat-sql-result';
 import { ChatChartComponent } from './chat-chart.component';
 import { ChatSqlResultDialogComponent } from './chat-sql-result-dialog.component';
-import { parseChartSpec, parseChartView, type ChatChartView } from '../chat-chart';
+import {
+  parseChartSpec,
+  parseChartView,
+  summarizeChartKpis,
+  type ChatChartView,
+  type ChartKpiItem,
+} from '../chat-chart';
 
 type SelectedTableDetail = {
   name: string;
@@ -35,6 +41,10 @@ export class ChatDataPartComponent {
 
   protected readonly sqlResults = computed(() => parseSqlResultSets(this.part().payload));
   protected readonly chartSpec = computed(() => parseChartSpec(this.part().payload));
+
+  protected chartKpis(chart: ChatChartView): ChartKpiItem[] {
+    return summarizeChartKpis(chart);
+  }
 
   protected sqlResultSets(): SqlResultSet[] {
     return this.sqlResults();

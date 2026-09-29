@@ -145,7 +145,7 @@ TYWS
 - 后端只做空转防护：没有图表/报告意图且无快照时去掉 `chart`/`report`；问数/选表彻底失败则结束；用户需求未完成时不允许直接 `stop`。查询成功后，清单/统计题结束；用户要图或报告时必须继续 `chart`/`report`，不能停。明细快照先按返回行汇总出图。出图失败且结果列对不上（例如只有合计、没有分类维度）时，即使快照被标成已汇总，也再查一次带维度的 `GROUP BY`（复用本轮表结构）。
 - 分析报告约定三个部分（总体情况、分类分析含嵌入图表、分析结论），正文由模型生成；`parse_report_spec` 基于查询快照聚合图表并写出 Word 文件，落到 `data/reports/{file_id}.docx`，前端通过 `GET /api/chat/reports/{file_id}` 下载。模型方案 JSON 解析失败或正文为空时，用当前快照和上一张已生成图表自动补一份报告，不再只提示「未能理解报告方案」。
 - 每轮用户消息最多规划 `MAX_PLANNER_TURNS`（当前为 5）次。
-- SQL 仍必须经过 `validate_sql`；图表仍只基于查询快照聚合，不另写 GROUP BY SQL。
+- SQL 仍必须经过 `validate_sql`；图表仍只基于查询快照聚合，不另写 GROUP BY SQL。支持 `bar`/`line`/`area`/`hbar`/`pie`/`radar`/`scatter`/`funnel`。默认配色以 AntD 主色 `#1677ff` 为基准；对话页用白色圆角卡片展示。散点图优先用两个数值列逐行打点。
 - 闲聊是终端节点，不再交回规划。
 
 ### search
@@ -285,7 +285,7 @@ TYWS
 - 空结果不会自动沉淀；无法解析血缘的语句不沉淀。对话里生成 SQL 框可手动加入待审核：用户可编辑名称、逻辑说明和 SQL，提交后与自动沉淀一样记为 LLM 生成、待审核。
 - SQL 节点记录 `created_at` / `updated_at`、`review_status`、`knowledge_extracted`。SQL 页可按来源、状态（启用 / 停用 / 待审核）筛选，并按最近更新、最早更新或名称排序。
 - SQL 页对待审核样例显示「通过 / 不通过」：通过后 `review_status=approved` 且启用并写入向量；不通过则删除。已审核样例才显示「启用 / 停用」。停用时删除对应向量记录，召回 Cypher 使用 `coalesce(s.enabled, true)=true`，旧节点缺字段视为启用。
-- 仅第一次待审核→已审核会抽取业务知识；之后反复启用/停用不再抽取。抽取失败且尚未打上 `knowledge_extracted` 时，再次启用可重试。旧节点：`llm` 且停用视为待审核；其余缺字段视为已审核且已抽取。
+- 仅第一次待审核→已审核会抽取业务知识；之后反复启用/停用不再抽取。审核接口先返回已通过状态，抽取在后台继续；抽取失败且尚未打上 `knowledge_extracted` 时，再次启用可重试。旧节点：`llm` 且停用视为待审核；其余缺字段视为已审核且已抽取。
 - 启用后的已审核样例才进入 search / schema context，供后续 SQL 生成参考。
 
 ### 业务知识抽取
@@ -355,7 +355,7 @@ python scripts\init.py
 
 ### 当前工作流展示
 
-前端显示节点：解析问题 → 规划步骤 → 检索上下文 → 确定数据表与表结构 → 生成 SQL → 校验 SQL → 执行 SQL；若本轮出图，再显示分析图表；若本轮出报告，再显示分析报告。规划节点可能出现多次（每条管道结束后再规划），前端会把多次 `planner`/`parse_plan` 合并为一个「规划步骤」，并取最后一次决策。步骤行右侧显示该步耗时（执行中实时计时）；规划、选表、出图、报告等合并节点显示各子步骤耗时之和。没有计时数据的历史消息仍显示「已完成」。
+前端显示节点：解析问题 → 规划步骤 → 检索上下文 → 确定数据表与表结构 → 生成 SQL → 校验 SQL → 执行 SQL；若本轮出图，再显示分析图表；若本轮出报告，再显示分析报告。规划节点可能出现多次（每条管道结束后再规划）。同一轮连续的 `planner`/`parse_plan` 合并为一个「规划步骤」；中间隔了检索、选表或 SQL 后再规划时，另起一行，耗时只计该轮。选表、出图、报告同样只合并相邻子步骤。步骤行右侧显示该步耗时（执行中实时计时）；没有计时数据的历史消息仍显示「已完成」。
 
 - `mergeDisplayToolParts()` 将 `table_selector`、`route_after_table_selection`、`format_no_table_response`、`load_sql_schema_context` 合并为 `table_context`；将报告相关节点合并为 `report_analysis`；后端实际节点仍独立执行。
 - “检索上下文”独立显示召回与图谱补全结果，不能与选表后的结构汇总混为一谈。
@@ -508,7 +508,7 @@ SQL_READ_DIALECT=sqlite
 - 通用文本调用在 `tools/llm.py:chat()`，与智能体共用 `load_llm_profiles()`。
 - 主套餐读取 `LLM_MODEL_NAME`、`OPENAI_API_BASE`、`OPENAI_API_KEY`（当前优先 Agent Plan：`https://ark.cn-beijing.volces.com/api/plan/v3`）。
 - 备用套餐读取 `LLM_FALLBACK_MODEL_NAME`、`LLM_FALLBACK_API_BASE`、`LLM_FALLBACK_API_KEY`。Coding Plan 地址为 `https://ark.cn-beijing.volces.com/api/coding/v3`。Agent Plan 必须使用专属 Key，不要和 Coding Plan / 普通方舟 Key 混用。未配齐备用 base 与 key 时不会切换。
-- 仅在限流、突发保护（如 `request burst`）或额度类错误、且该次调用尚未向调用方产出实质内容时切换备用套餐；流式里的空分片不视为已产出。刚限流过的套餐会冷却约 3 分钟，后续节点先走另一套。Embedding 默认走 `EMBEDDING_*`（当前同样优先 Agent Plan）；主套餐额度用尽时改走 `LLM_FALLBACK_*`（可用 `EMBEDDING_FALLBACK_*` 单独覆盖）。
+- 仅在限流、突发保护（如 `request burst`）、额度类错误或连接失败（TLS 握手中断、超时、502/503/504）、且该次调用尚未向调用方产出实质内容时切换备用套餐；流式里的空分片不视为已产出。刚失败过的套餐会冷却约 3 分钟，后续节点先走另一套。Embedding 默认走 `EMBEDDING_*`（当前同样优先 Agent Plan）；主套餐额度用尽或连不上时改走 `LLM_FALLBACK_*`（可用 `EMBEDDING_FALLBACK_*` 单独覆盖）。
 - 上述数值是当前代码配置，不是 `.env` 中可直接修改的同名开关。不要将发出的 `enable_thinking=False` 等同于供应商已经保证不输出思考文本。
 
 ## 开发原则
@@ -590,7 +590,7 @@ SQL 生成链路中，物理表名必须来自：
 - Milvus 向量检索与 Neo4j 图谱补全协同。
 - ADK 智能体链路：问题解析、检索、选表、汇总表结构、生成 SQL、校验 SQL、执行 SQL。
 - 元数据维护页面：数据目录、枚举值、表关系、业务知识、SQL。
-- 问数成功且有结果时沉淀 LLM 生成 SQL 为待审核；SQL 页通过后启用并抽取业务知识，不通过则删除。抽取知识同样先待审核，知识页通过后才启用并参与问数。
+- 问数成功且有结果时沉淀 LLM 生成 SQL 为待审核；SQL 页通过后立即启用，业务知识在后台抽取，不通过则删除。抽取知识同样先待审核，知识页通过后才启用并参与问数。
 - 导入任务页面和 Excel 初始化。
 - 前端智能对话与工作流轨迹展示。
 

@@ -255,6 +255,24 @@ class ReportMaterializeTest(unittest.TestCase):
         self.assertEqual(payload["analyses"][0]["heading"], "各地市供电公司有效工单")
         self.assertEqual(payload["analyses"][0]["chart"]["categories"][0], "国网杭州供电公司")
 
+    def test_render_chart_png_matches_frontend_palette(self):
+        png = report_mod.render_chart_png({
+            "title": "各地市数量",
+            "type": "pie",
+            "categories": ["杭州", "宁波"],
+            "series": [{"name": "数量", "values": [40, 30]}],
+            "palette": ["#1677ff", "#69b1ff"],
+        })
+        self.assertTrue(png.startswith(b"\x89PNG"))
+        bar = report_mod.render_chart_png({
+            "title": "各地市数量",
+            "type": "bar",
+            "categories": ["杭州", "宁波"],
+            "series": [{"name": "数量", "values": [40, 30]}],
+            "palette": ["#1677ff"],
+        })
+        self.assertTrue(bar.startswith(b"\x89PNG"))
+
     def test_write_report_without_charts_still_has_sections(self):
         dest = self.tmp / "plain.docx"
         write_report_docx(

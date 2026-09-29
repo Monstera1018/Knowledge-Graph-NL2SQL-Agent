@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
@@ -41,7 +41,21 @@ export class KnowledgeRelationDialogComponent implements OnInit {
   protected readonly tablesLoading = signal(false);
   protected readonly selectedTable = signal<TableNode | null>(null);
   protected readonly columns = signal<ColumnNode[]>([]);
+  protected readonly columnQuery = signal('');
   protected readonly columnsLoading = signal(false);
+  protected readonly filteredColumns = computed(() => {
+    const keyword = this.columnQuery().trim().toLowerCase();
+    const items = this.columns();
+    if (!keyword) {
+      return items;
+    }
+    return items.filter((column) => {
+      const haystack = [column.name, column.comment, column.dtype]
+        .map((part) => (part || '').toLowerCase())
+        .join(' ');
+      return haystack.includes(keyword);
+    });
+  });
   protected readonly wholeTable = signal(false);
   protected readonly selectedColumns = signal<Set<string>>(new Set());
 
@@ -111,10 +125,15 @@ export class KnowledgeRelationDialogComponent implements OnInit {
     this.tableSearch$.next(value);
   }
 
+  protected onColumnQueryChange(value: string): void {
+    this.columnQuery.set(value);
+  }
+
   protected selectTable(table: TableNode): void {
     this.selectedTable.set(table);
     this.wholeTable.set(false);
     this.selectedColumns.set(new Set());
+    this.columnQuery.set('');
     this.loadColumnsForTable(table.name, table.uuid);
   }
 

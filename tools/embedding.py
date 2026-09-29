@@ -10,7 +10,7 @@ import aiohttp
 from litellm import aembedding
 
 from tools.llm import (
-    is_llm_quota_or_rate_limit_error,
+    is_llm_failover_error,
     mark_profile_rate_limited,
     order_profiles_for_attempt,
 )
@@ -196,13 +196,13 @@ async def get_embeddings(
                 break
             except BaseException as exc:
                 last_error = exc
-                if is_llm_quota_or_rate_limit_error(exc):
+                if is_llm_failover_error(exc):
                     mark_profile_rate_limited((use_model, use_base, use_key))
                 has_next = index + 1 < len(profiles)
-                if not has_next or not is_llm_quota_or_rate_limit_error(exc):
+                if not has_next or not is_llm_failover_error(exc):
                     raise
                 logger.warning(
-                    "Embedding 套餐触发限流或额度限制，切换到备用套餐重试: %s",
+                    "Embedding 套餐调用失败，切换到备用套餐重试: %s",
                     exc,
                 )
                 await asyncio.sleep(_FALLBACK_DELAY_S)

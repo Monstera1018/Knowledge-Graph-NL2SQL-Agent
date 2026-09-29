@@ -7,6 +7,8 @@ from tools.llm import (
     chat,
     clear_profile_rate_limits,
     generate_with_failover,
+    is_llm_connection_error,
+    is_llm_failover_error,
     is_llm_quota_or_rate_limit_error,
     load_llm_profiles,
 )
@@ -58,6 +60,13 @@ class QuotaErrorDetectTest(unittest.TestCase):
 
     def test_generic_server_error_is_not_quota(self):
         self.assertFalse(is_llm_quota_or_rate_limit_error(Exception("internal error")))
+        self.assertFalse(is_llm_failover_error(Exception("internal error")))
+
+    def test_connection_error_is_failover(self):
+        exc = Exception("litellm.InternalServerError: OpenAIException - Connection error.")
+        self.assertTrue(is_llm_connection_error(exc))
+        self.assertTrue(is_llm_failover_error(exc))
+        self.assertFalse(is_llm_quota_or_rate_limit_error(exc))
 
 
 class LoadProfilesTest(unittest.TestCase):
@@ -177,6 +186,23 @@ class GenerateFailoverTest(unittest.IsolatedAsyncioTestCase):
                 async for item in generate_with_failover(
                     [_EmptyThenError(), fallback],
                     SimpleNamespace(model="openai/deepseek-v4-flash"),
+                )
+            ]
+        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(fallback.calls, 1)
+
+    async def test_switches_on_connection_error(self):
+        primary = _FakeBackend(
+            "primary",
+            "openai/ark-code-latest",
+            error=Exception("InternalServerError: OpenAIException - Connection error."),
+        )
+        fallback = _FakeBackend("fallback", "openai/deepseek-v4-flash", chunks=["ok"])
+        with patch("tools.llm.asyncio.sleep", new=AsyncMock()):
+            chunks = [
+                item
+                async for item in generate_with_failover(
+                    [primary, fallback], SimpleNamespace(model=primary.model)
                 )
             ]
         self.assertEqual(chunks, ["ok"])

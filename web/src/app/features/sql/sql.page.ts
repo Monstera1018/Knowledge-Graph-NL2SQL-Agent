@@ -374,7 +374,7 @@ export class SqlPage {
           if (this.selected()?.uuid === saved.uuid) {
             this.selected.update((current) => (current ? { ...current, ...saved } : saved));
           }
-          this.snack.success('已通过并启用。抽取的业务知识默认停用，请到知识页复核后再启用。');
+          this.snack.success('已通过并启用。业务知识正在后台抽取，完成后默认停用，请到知识页复核后再启用。');
         },
         error: (err) => {
           this.reviewingUuid.set(null);

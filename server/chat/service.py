@@ -16,7 +16,7 @@ from server.chat.protocol import (
     new_turn_id,
     sse_line,
 )
-from tools.llm import is_llm_quota_or_rate_limit_error
+from tools.llm import is_llm_connection_error, is_llm_quota_or_rate_limit_error
 from tools.retrieval import parse_sql_reference_samples
 
 _COPILOT_AGENT_ID = "copilot"
@@ -846,8 +846,13 @@ def _user_facing_runtime_error(
         stage: str = "",
         sql_result_emitted: bool = False,
 ) -> str:
+    if is_llm_connection_error(exc):
+        return (
+            "模型接口连接失败，这次问数还没完成。"
+            "请稍后再试；若刚出现网络波动，系统会自动改走备用套餐。"
+        )
     if not is_llm_quota_or_rate_limit_error(exc):
-        return str(exc)
+        return "模型调用失败，请稍后再试。"
 
     current = (stage or "").strip()
     if current in _REPORT_STAGES:

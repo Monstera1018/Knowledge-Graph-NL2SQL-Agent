@@ -6,10 +6,38 @@ import json
 import re
 from typing import Any
 
-CHART_TYPES = frozenset({"bar", "line", "pie"})
+CHART_TYPES = frozenset({"bar", "line", "pie", "area", "hbar", "radar", "scatter", "funnel"})
+CHART_TYPE_ALIASES = {
+    "column": "bar",
+    "柱状": "bar",
+    "柱状图": "bar",
+    "折线": "line",
+    "折线图": "line",
+    "趋势": "line",
+    "饼": "pie",
+    "饼图": "pie",
+    "环形": "pie",
+    "面积": "area",
+    "面积图": "area",
+    "条形": "hbar",
+    "条形图": "hbar",
+    "横向柱": "hbar",
+    "barh": "hbar",
+    "雷达": "radar",
+    "雷达图": "radar",
+    "spider": "radar",
+    "散点": "scatter",
+    "散点图": "scatter",
+    "点图": "scatter",
+    "漏斗": "funnel",
+    "漏斗图": "funnel",
+}
 CHART_AGGREGATIONS = frozenset({"count", "sum", "avg"})
 MAX_CHARTS = 3
 MAX_PIE_SLICES = 12
+MAX_RADAR_AXES = 8
+MAX_FUNNEL_SLICES = 8
+MAX_SCATTER_POINTS = 200
 SAMPLE_ROWS = 8
 NO_CHART_SNAPSHOT_MESSAGE = (
     "当前会话还没有可分析的查询结果。请先提出一个数据问题，等系统查出表格后再让我生成图表。"
@@ -18,9 +46,9 @@ _JSON_OBJECT_RE = re.compile(r"\{.*?\}", re.DOTALL)
 _NUMBER_RE = re.compile(r"^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$")
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 PALETTE_PRESETS: dict[str, list[str]] = {
-    "default": ["#2563eb", "#0ea5e9", "#059669", "#d97706", "#7c3aed"],
+    "default": ["#1677ff", "#69b1ff", "#36cfc9", "#faad14", "#722ed1"],
     "orange": ["#ea580c", "#f59e0b", "#fbbf24", "#fb923c", "#c2410c"],
-    "blue": ["#1d4ed8", "#2563eb", "#3b82f6", "#0ea5e9", "#38bdf8"],
+    "blue": ["#1677ff", "#4096ff", "#69b1ff", "#91caff", "#bae0ff"],
     "green": ["#047857", "#059669", "#10b981", "#34d399", "#6ee7b7"],
     "purple": ["#6d28d9", "#7c3aed", "#8b5cf6", "#a78bfa", "#c4b5fd"],
 }
@@ -174,6 +202,7 @@ def _snapshot_sets(snapshot: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 
 _COLUMN_KEY_RE = re.compile(r"[\s`\"'“”‘’\[\]（）()]+")
+_COLUMN_HINT_SPLIT_RE = re.compile(r"[\s()（）\[\]【】/、，,|+\-_—:：]+")
 
 
 def _normalize_column_key(name: str) -> str:
@@ -457,10 +486,22 @@ def coerce_chart_plan(raw: object, *, title: str = "") -> dict[str, Any] | None:
     chart = dict(raw)
     hint = f"{title} {chart.get('title') or ''}"
     chart_type = str(chart.get("type") or "").strip().lower()
+    if chart_type in CHART_TYPE_ALIASES:
+        chart_type = CHART_TYPE_ALIASES[chart_type]
     if chart_type not in CHART_TYPES:
-        if re.search(r"折线|趋势|line", hint, re.I):
+        if re.search(r"雷达|spider", hint, re.I):
+            chart_type = "radar"
+        elif re.search(r"散点|点图|scatter", hint, re.I):
+            chart_type = "scatter"
+        elif re.search(r"漏斗|funnel", hint, re.I):
+            chart_type = "funnel"
+        elif re.search(r"面积|area", hint, re.I):
+            chart_type = "area"
+        elif re.search(r"条形|横向|hbar|barh", hint, re.I):
+            chart_type = "hbar"
+        elif re.search(r"折线|趋势|line", hint, re.I):
             chart_type = "line"
-        elif re.search(r"饼|pie", hint, re.I):
+        elif re.search(r"饼|环形|pie", hint, re.I):
             chart_type = "pie"
         else:
             chart_type = "bar"
@@ -494,6 +535,14 @@ def _resolve_column(name: object, columns: list[str]) -> str:
     exact = lookup.get(text) or lookup.get(text.casefold()) or lookup.get(_normalize_column_key(text))
     if exact:
         return exact
+    # 复合名如「客户名称(记账单号)」先按片段精确命中，避免同时匹配两列后直接失败。
+    for part in _COLUMN_HINT_SPLIT_RE.split(text):
+        hint = part.strip()
+        if len(hint) < 2:
+            continue
+        hit = lookup.get(hint) or lookup.get(hint.casefold()) or lookup.get(_normalize_column_key(hint))
+        if hit:
+            return hit
     key = _normalize_column_key(text)
     if not key or len(key) < 2:
         return ""
@@ -502,7 +551,19 @@ def _resolve_column(name: object, columns: list[str]) -> str:
         if key in _normalize_column_key(column) or _normalize_column_key(column) in key
     ]
     unique = list(dict.fromkeys(hits))
-    return unique[0] if len(unique) == 1 else ""
+    if len(unique) == 1:
+        return unique[0]
+    if unique:
+        ranked: list[tuple[int, int, str]] = []
+        for column in unique:
+            column_key = _normalize_column_key(column)
+            pos = key.find(column_key)
+            if pos >= 0:
+                ranked.append((pos, -len(column_key), column))
+        ranked.sort()
+        if ranked:
+            return ranked[0][2]
+    return ""
 
 
 def infer_fallback_chart_plan(heading: str, snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -549,7 +610,17 @@ def infer_fallback_chart_plan(heading: str, snapshot: dict[str, Any] | None) -> 
         aggregation = "count"
         label = "数量"
     chart_type = "line" if infer_column_kind(rows, x_column) == "time" or re.search(r"月|期|趋势", heading) else "bar"
-    if re.search(r"占比|结构", heading):
+    if re.search(r"雷达", heading):
+        chart_type = "radar"
+    elif re.search(r"散点", heading):
+        chart_type = "scatter"
+    elif re.search(r"漏斗", heading):
+        chart_type = "funnel"
+    elif re.search(r"面积", heading):
+        chart_type = "area"
+    elif re.search(r"条形|横向", heading):
+        chart_type = "hbar"
+    elif re.search(r"占比|结构", heading):
         chart_type = "pie"
     return {
         "title": heading or x_column,
@@ -619,16 +690,28 @@ def _aggregate_chart(
         return None
 
     categories = order
-    if chart_type == "pie":
+    if chart_type in {"pie", "funnel"}:
         series = series[:1]
+        limit = MAX_FUNNEL_SLICES if chart_type == "funnel" else MAX_PIE_SLICES
         pairs = list(zip(categories, series[0]["values"]))
         pairs.sort(key=lambda item: item[1], reverse=True)
-        if len(pairs) > MAX_PIE_SLICES:
-            head = pairs[: MAX_PIE_SLICES - 1]
-            rest = sum(value for _, value in pairs[MAX_PIE_SLICES - 1 :])
+        if len(pairs) > limit:
+            head = pairs[: limit - 1]
+            rest = sum(value for _, value in pairs[limit - 1 :])
             pairs = [*head, ("其他", rest)]
         categories = [name for name, _ in pairs]
         series[0]["values"] = [value for _, value in pairs]
+    elif chart_type == "radar":
+        if len(categories) < 3:
+            return None
+        if len(categories) > MAX_RADAR_AXES:
+            pairs = list(zip(categories, series[0]["values"]))
+            pairs.sort(key=lambda item: item[1], reverse=True)
+            keep = {name for name, _ in pairs[:MAX_RADAR_AXES]}
+            indexes = [index for index, name in enumerate(categories) if name in keep][:MAX_RADAR_AXES]
+            categories = [categories[index] for index in indexes]
+            for item in series:
+                item["values"] = [item["values"][index] for index in indexes]
 
     return {
         "title": title,
@@ -636,6 +719,42 @@ def _aggregate_chart(
         "note": note,
         "categories": categories,
         "series": series,
+    }
+
+
+def _scatter_chart(
+        *,
+        title: str,
+        note: str,
+        x_column: str,
+        metrics: list[dict[str, str]],
+        rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """两个数值列逐行打点；X 不是数值时退回按分类汇总后再画散点。"""
+    if not metrics:
+        return None
+    metric = metrics[0]
+    points: list[tuple[float, float]] = []
+    for row in rows:
+        x_value = parse_number(row.get(x_column))
+        if x_value is None:
+            continue
+        y_value = parse_number(row.get(metric["column"]))
+        if y_value is None:
+            continue
+        points.append((x_value, float(y_value)))
+    if len(points) < 2:
+        return None
+    if len(points) > MAX_SCATTER_POINTS:
+        points = points[:MAX_SCATTER_POINTS]
+        if "截断" not in note:
+            note = f"{note}；散点仅展示前 {MAX_SCATTER_POINTS} 个点"
+    return {
+        "title": title,
+        "type": "scatter",
+        "note": note,
+        "categories": [f"{item[0]:g}" for item in points],
+        "series": [{"name": metric["label"], "values": [item[1] for item in points]}],
     }
 
 
@@ -677,16 +796,9 @@ def materialize_chart_spec(
             source_truncated=source_truncated,
         )
 
-    feasible = plan.get("feasible") is not False
     summary = str(plan.get("summary") or "").strip()
     raw_charts = plan.get("charts")
-    if feasible is False:
-        reason = summary or "图表规划认为当前结果不适合出图。"
-        return _empty_chart_spec(
-            reason,
-            source_row_count=source_row_count,
-            source_truncated=source_truncated,
-        )
+    # 模型常因复合列名误判不可行；只要结果里有列，就继续尝试绑定或兜底出图。
 
     charts: list[dict[str, Any]] = []
     failures: list[str] = []
@@ -701,7 +813,7 @@ def materialize_chart_spec(
                 continue
             chart_type = str(item.get("type") or "").strip().lower()
             if chart_type not in CHART_TYPES:
-                failures.append("图表类型不受支持，仅支持柱状图、折线图或饼图。")
+                failures.append("图表类型不受支持，仅支持柱状、折线、面积、条形、饼图、雷达、散点或漏斗。")
                 continue
             title = str(item.get("title") or "").strip() or "查询结果"
             note = str(item.get("note") or "").strip()
@@ -742,22 +854,65 @@ def materialize_chart_spec(
                     f"指标列「{y_text}」无法绑定到当前结果，或聚合方式不受支持。可用列：{available}。"
                 )
                 continue
-            if chart_type == "pie":
+            if chart_type in {"pie", "funnel", "scatter"}:
                 metrics = metrics[:1]
-            materialized = _aggregate_chart(
-                chart_type=chart_type,
-                title=title,
-                note=_chart_source_note(note, row_count=len(rows), truncated=source_truncated),
-                x_column=x_column,
-                metrics=metrics,
-                rows=rows,
-            )
+            source_note = _chart_source_note(note, row_count=len(rows), truncated=source_truncated)
+            if chart_type == "scatter":
+                materialized = _scatter_chart(
+                    title=title,
+                    note=source_note,
+                    x_column=x_column,
+                    metrics=metrics,
+                    rows=rows,
+                )
+                if materialized is None:
+                    materialized = _aggregate_chart(
+                        chart_type="scatter",
+                        title=title,
+                        note=source_note,
+                        x_column=x_column,
+                        metrics=metrics,
+                        rows=rows,
+                    )
+            else:
+                materialized = _aggregate_chart(
+                    chart_type=chart_type,
+                    title=title,
+                    note=source_note,
+                    x_column=x_column,
+                    metrics=metrics,
+                    rows=rows,
+                )
             if materialized:
                 charts.append(materialized)
             else:
                 failures.append(f"按「{x_column}」汇总后没有可绘制的数据点。")
 
     if not charts:
+        fallback = infer_fallback_chart_plan(summary or user_request, snapshot)
+        fallback_x = str(
+            ((fallback.get("x") or {}) if isinstance(fallback.get("x"), dict) else {}).get("column")
+            or fallback.get("x")
+            or ""
+        )
+        already_tried = {
+            str(
+                ((item.get("x") or {}) if isinstance(item.get("x"), dict) else {}).get("column")
+                or item.get("x")
+                or ""
+            )
+            for item in (raw_charts or [])
+            if isinstance(item, dict)
+        }
+        if fallback and fallback_x and fallback_x not in already_tried:
+            retry = materialize_chart_spec(
+                json.dumps({"feasible": True, "summary": summary, "charts": [fallback]}, ensure_ascii=False),
+                snapshot,
+                user_request=user_request,
+                last_chart=last_chart,
+            )
+            if retry.get("feasible"):
+                return retry
         reason = " ".join(failures) if failures else (
             f"当前结果缺少合适的分析维度。可用列：{available}。"
         )

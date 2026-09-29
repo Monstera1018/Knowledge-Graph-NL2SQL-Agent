@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime
 from io import BytesIO
@@ -19,6 +20,7 @@ from adk_agents.copilot.chart import (
     infer_fallback_chart_plan,
     materialize_chart_spec,
     parse_json_objects,
+    parse_number,
 )
 
 MAX_REPORT_ANALYSES = 3
@@ -352,71 +354,320 @@ def _configure_matplotlib() -> Any:
     return plt
 
 
+_ANTD_PRIMARY = "#1677ff"
+_DEFAULT_REPORT_PALETTE = ["#1677ff", "#69b1ff", "#36cfc9", "#faad14", "#722ed1"]
+
+
+def _resolve_report_palette(palette: list[str]) -> list[str]:
+    return palette or list(_DEFAULT_REPORT_PALETTE)
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> tuple[float, float, float, float]:
+    raw = (hex_color or "").lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(part * 2 for part in raw)
+    if len(raw) != 6:
+        return (22 / 255, 119 / 255, 255 / 255, alpha)
+    value = int(raw, 16)
+    return ((value >> 16) & 255) / 255, ((value >> 8) & 255) / 255, (value & 255) / 255, alpha
+
+
+def _format_chart_number(value: float) -> str:
+    if not math.isfinite(value):
+        return "—"
+    absolute = abs(value)
+    if absolute >= 10000:
+        wan = value / 10000
+        return f"{wan:.0f}万" if absolute >= 100000 else f"{wan:.1f}万"
+    if abs(value - round(value)) < 1e-9:
+        return f"{int(round(value)):,}"
+    return f"{value:,.2f}"
+
+
+def _peak_index(values: list[float]) -> int:
+    if not values:
+        return 0
+    return max(range(len(values)), key=lambda index: values[index])
+
+
+def _style_report_axes(ax, *, horizontal: bool = False) -> None:
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(not horizontal)
+    ax.spines["left"].set_color("#f0f0f0")
+    ax.spines["bottom"].set_color("#f0f0f0")
+    ax.tick_params(colors="#8c8c8c", labelsize=9, length=0)
+    grid_axis = "x" if horizontal else "y"
+    ax.grid(True, axis=grid_axis, linestyle="--", linewidth=0.8, color="#f0f0f0")
+    ax.set_axisbelow(True)
+
+
+def _add_average_line(ax, values: list[float], *, horizontal: bool = False) -> None:
+    finite = [item for item in values if math.isfinite(item)]
+    if not finite:
+        return
+    average = sum(finite) / len(finite)
+    if horizontal:
+        ax.axvline(average, color="#91caff", linestyle="--", linewidth=1, zorder=1)
+    else:
+        ax.axhline(average, color="#91caff", linestyle="--", linewidth=1, zorder=1)
+        ax.text(
+            0.99,
+            average,
+            f"均值 {_format_chart_number(average)}",
+            transform=ax.get_yaxis_transform(),
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="#8c8c8c",
+        )
+
+
 def render_chart_png(chart: dict[str, Any]) -> bytes:
     plt = _configure_matplotlib()
     categories = [str(item) for item in (chart.get("categories") or [])]
     series = chart.get("series") if isinstance(chart.get("series"), list) else []
-    palette = [str(item) for item in (chart.get("palette") or []) if str(item).strip()]
+    palette = _resolve_report_palette(
+        [str(item) for item in (chart.get("palette") or []) if str(item).strip()]
+    )
     chart_type = str(chart.get("type") or "bar").strip().lower()
     title = str(chart.get("title") or "").strip()
+    primary = palette[0] if palette else _ANTD_PRIMARY
 
-    fig, ax = plt.subplots(figsize=(8.2, 4.4), dpi=140)
+    polar = chart_type == "radar"
+    fig, ax = plt.subplots(
+        figsize=(8.2, 4.4),
+        dpi=140,
+        subplot_kw={"projection": "polar"} if polar else None,
+    )
     fig.patch.set_facecolor("#ffffff")
     ax.set_facecolor("#ffffff")
     if title:
-        ax.set_title(title, fontsize=12, pad=10)
+        ax.set_title(title, fontsize=13, pad=12, color="#262626", loc="left", fontweight="bold")
 
     if chart_type == "pie" and series:
         values = [float(item) for item in (series[0].get("values") or [])][: len(categories)]
         if not values or not any(value > 0 for value in values):
             ax.text(0.5, 0.5, "暂无数据", ha="center", va="center")
         else:
-            colors = palette[: len(values)] or None
-            ax.pie(values, labels=categories[: len(values)], colors=colors, autopct="%1.1f%%")
+            colors = [palette[index % len(palette)] for index in range(len(values))]
+            total = sum(values)
+            peak = _peak_index(values)
+            labels = [
+                f"{name}\n{value / total * 100:.2f}%" if total else name
+                for name, value in zip(categories[: len(values)], values)
+            ]
+            explode = [0.03 if index == peak else 0 for index in range(len(values))]
+            wedges, texts = ax.pie(
+                values,
+                labels=labels,
+                colors=colors,
+                startangle=90,
+                explode=explode,
+                wedgeprops={"width": 0.32, "edgecolor": "#ffffff", "linewidth": 2},
+                textprops={"color": "#595959", "fontsize": 9},
+                labeldistance=1.18,
+            )
+            wedges[peak].set_linewidth(3)
+            ax.text(0, 0.06, _format_chart_number(total), ha="center", va="center", color=primary, fontsize=16, fontweight="bold")
+            ax.text(0, -0.16, "总计", ha="center", va="center", color="#8c8c8c", fontsize=9)
+            ax.legend(
+                wedges,
+                categories[: len(values)],
+                loc="center left",
+                bbox_to_anchor=(1.08, 0.5),
+                frameon=False,
+                fontsize=9,
+                handlelength=0.8,
+            )
             ax.axis("equal")
+    elif chart_type == "funnel" and series:
+        values = [float(item) for item in (series[0].get("values") or [])][: len(categories)]
+        if not values:
+            ax.text(0.5, 0.5, "暂无数据", ha="center", va="center")
+        else:
+            count = len(values)
+            ax.set_xlim(0, 1)
+            ax.invert_yaxis()
+            for index, (name, value) in enumerate(zip(categories[:count], values)):
+                width = max(0.28, 0.92 - index * 0.14)
+                left = (1 - width) / 2
+                color = palette[index % len(palette)]
+                ax.barh(
+                    index,
+                    width,
+                    left=left,
+                    height=0.7,
+                    color=_hex_to_rgba(color, 0.92),
+                    edgecolor="#ffffff",
+                    linewidth=2,
+                )
+                ax.text(
+                    0.5,
+                    index,
+                    f"{name}  {_format_chart_number(value)}",
+                    ha="center",
+                    va="center",
+                    color="#ffffff",
+                    fontsize=9,
+                )
+            ax.set_yticks([])
+            ax.set_xticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
+    elif chart_type == "radar" and categories:
+        axes = len(categories)
+        angles = [index / axes * 2 * math.pi for index in range(axes)]
+        angles.append(angles[0])
+        ax.set_facecolor("#f7faff")
+        for index, item in enumerate(series):
+            if not isinstance(item, dict):
+                continue
+            values = [float(value) for value in (item.get("values") or [])][:axes]
+            values.extend([0.0] * (axes - len(values)))
+            values.append(values[0])
+            color = palette[index] if index < len(palette) else _ANTD_PRIMARY
+            ax.plot(angles, values, marker="o", markersize=5, linewidth=2, label=str(item.get("name") or f"系列{index + 1}"), color=color)
+            ax.fill(angles, values, alpha=0.28, color=color)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(categories, color="#595959", fontsize=9)
+        ax.grid(color="#d6e4ff", linestyle="-", linewidth=0.8)
+        ax.spines["polar"].set_color("#d6e4ff")
+        if len(series) > 1:
+            ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.1), frameon=False)
+    elif chart_type == "scatter" and series:
+        y_values = [float(value) for value in (series[0].get("values") or [])]
+        x_values: list[float] = []
+        for index, name in enumerate(categories):
+            parsed = parse_number(name)
+            x_values.append(parsed if parsed is not None else float(index))
+        count = min(len(x_values), len(y_values))
+        ax.scatter(
+            x_values[:count],
+            y_values[:count],
+            color=_hex_to_rgba(primary, 0.82),
+            edgecolors="#ffffff",
+            linewidths=1,
+            s=48,
+            zorder=3,
+        )
+        _style_report_axes(ax)
     else:
         x_pos = list(range(len(categories)))
-        if chart_type == "line":
+        rotate = 25 if len(categories) > 6 else 0
+        if chart_type in {"line", "area"}:
             for index, item in enumerate(series):
                 if not isinstance(item, dict):
                     continue
                 values = [float(value) for value in (item.get("values") or [])]
-                color = palette[index] if index < len(palette) else None
-                ax.plot(
-                    x_pos[: len(values)],
+                color = palette[index] if index < len(palette) else _ANTD_PRIMARY
+                xs = x_pos[: len(values)]
+                ax.plot(xs, values, linewidth=3, color=color, zorder=3, label=str(item.get("name") or f"系列{index + 1}"))
+                ax.fill_between(xs, values, color=_hex_to_rgba(color, 0.28), linewidth=0)
+                peak = _peak_index(values)
+                for point_index, (x, value) in enumerate(zip(xs, values)):
+                    is_peak = point_index == peak
+                    ax.scatter(
+                        [x],
+                        [value],
+                        s=90 if is_peak else 48,
+                        facecolors=color if is_peak else "#ffffff",
+                        edgecolors=color,
+                        linewidths=2,
+                        zorder=4,
+                    )
+                if values:
+                    ax.annotate(
+                        f"最大 {_format_chart_number(values[peak])}",
+                        (xs[peak], values[peak]),
+                        textcoords="offset points",
+                        xytext=(0, 10),
+                        ha="center",
+                        fontsize=8,
+                        color=color,
+                    )
+                _add_average_line(ax, values)
+        elif chart_type == "hbar":
+            height = 0.56 / max(1, len(series))
+            for index, item in enumerate(series):
+                if not isinstance(item, dict):
+                    continue
+                values = [float(value) for value in (item.get("values") or [])]
+                offset = (index - (len(series) - 1) / 2) * height
+                color = palette[index] if index < len(palette) else _ANTD_PRIMARY
+                peak = _peak_index(values)
+                bar_colors = [
+                    color if data_index == peak else _hex_to_rgba(color, 0.82)
+                    for data_index in range(len(values))
+                ]
+                bars = ax.barh(
+                    [pos + offset for pos in x_pos[: len(values)]],
                     values,
-                    marker="o",
+                    height=height,
                     label=str(item.get("name") or f"系列{index + 1}"),
-                    color=color,
+                    color=bar_colors,
                 )
+                for data_index, (bar, value) in enumerate(zip(bars, values)):
+                    ax.text(
+                        bar.get_width(),
+                        bar.get_y() + bar.get_height() / 2,
+                        _format_chart_number(value),
+                        va="center",
+                        ha="left",
+                        fontsize=9,
+                        fontweight="bold" if data_index == peak else "normal",
+                        color=primary if data_index == peak else "#595959",
+                    )
+                _add_average_line(ax, values, horizontal=True)
+            if categories:
+                ax.set_yticks(x_pos)
+                ax.set_yticklabels(categories, color="#8c8c8c")
         else:
-            width = 0.72 / max(1, len(series))
+            width = 0.56 / max(1, len(series))
             for index, item in enumerate(series):
                 if not isinstance(item, dict):
                     continue
                 values = [float(value) for value in (item.get("values") or [])]
                 offset = (index - (len(series) - 1) / 2) * width
-                color = palette[index] if index < len(palette) else None
-                ax.bar(
+                color = palette[index] if index < len(palette) else _ANTD_PRIMARY
+                peak = _peak_index(values)
+                bar_colors = [
+                    color if data_index == peak else _hex_to_rgba(color, 0.82)
+                    for data_index in range(len(values))
+                ]
+                bars = ax.bar(
                     [pos + offset for pos in x_pos[: len(values)]],
                     values,
                     width=width,
                     label=str(item.get("name") or f"系列{index + 1}"),
-                    color=color,
+                    color=bar_colors,
+                    zorder=3,
                 )
-        if categories:
+                for data_index, (bar, value) in enumerate(zip(bars, values)):
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        bar.get_height(),
+                        _format_chart_number(value),
+                        va="bottom",
+                        ha="center",
+                        fontsize=9,
+                        fontweight="bold" if data_index == peak else "normal",
+                        color=primary if data_index == peak else "#595959",
+                    )
+                _add_average_line(ax, values)
+            if categories:
+                ax.set_xticks(x_pos)
+                ax.set_xticklabels(categories, rotation=rotate, ha="right" if rotate else "center", color="#8c8c8c")
+        if chart_type in {"line", "area"} and categories:
             ax.set_xticks(x_pos)
-            ax.set_xticklabels(categories, rotation=25, ha="right")
+            ax.set_xticklabels(categories, rotation=rotate, ha="right" if rotate else "center", color="#8c8c8c")
         if len(series) > 1:
-            ax.legend()
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.yaxis.grid(True, linestyle="--", alpha=0.35)
-        ax.set_axisbelow(True)
+            ax.legend(frameon=False, fontsize=9, labelcolor="#595959")
+        _style_report_axes(ax, horizontal=chart_type == "hbar")
 
     fig.tight_layout()
     buffer = BytesIO()
-    fig.savefig(buffer, format="png", bbox_inches="tight")
+    fig.savefig(buffer, format="png", bbox_inches="tight", facecolor="#ffffff")
     plt.close(fig)
     return buffer.getvalue()
 

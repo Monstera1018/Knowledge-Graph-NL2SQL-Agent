@@ -465,11 +465,68 @@ div.chat-part__context-title {
 }
 
 .chat-part__chart-item {
-  padding: 0.5rem 0.75rem 0.85rem;
+  padding: 0.75rem 0.75rem 0.85rem;
 }
 
 .chat-part__chart-item + .chat-part__chart-item {
-  border-top: 1px solid #f1f5f9;
+  padding-top: 0.25rem;
+}
+
+.chat-part__chart-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0 0 0.65rem;
+}
+
+.chat-part__chart-kpi {
+  min-width: 0;
+  padding: 0.5rem 0.65rem 0.45rem;
+  border: 1px solid #f0f0f0;
+  border-radius: 0.5rem;
+  background: linear-gradient(180deg, #f8fbff 0%, #fff 100%);
+}
+
+.chat-part__chart-kpi-label {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: #8c8c8c;
+}
+
+.chat-part__chart-kpi-value {
+  margin-top: 0.125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #1677ff;
+}
+
+.chat-part__chart-kpi-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: #94a3b8;
+}
+
+.chat-part__chart-card {
+  padding: 0.75rem 0.75rem 0.35rem;
+  border: 1px solid #f0f0f0;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 8px 24px rgb(22 119 255 / 0.08);
+}
+
+@media (max-width: 720px) {
+  .chat-part__chart-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .chat-part__chart-item-head {

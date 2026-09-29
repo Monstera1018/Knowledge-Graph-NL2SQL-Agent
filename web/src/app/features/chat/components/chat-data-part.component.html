@@ -173,7 +173,20 @@
               <p class="chat-part__chart-item-note">{{ chart.note }}</p>
             }
           </div>
-          <app-chat-chart [spec]="chart" />
+          <div class="chat-part__chart-kpis">
+            @for (kpi of chartKpis(chart); track kpi.label) {
+              <div class="chat-part__chart-kpi">
+                <div class="chat-part__chart-kpi-label">{{ kpi.label }}</div>
+                <div class="chat-part__chart-kpi-value">{{ kpi.value }}</div>
+                @if (kpi.hint) {
+                  <div class="chat-part__chart-kpi-hint">{{ kpi.hint }}</div>
+                }
+              </div>
+            }
+          </div>
+          <div class="chat-part__chart-card">
+            <app-chat-chart [spec]="chart" />
+          </div>
         </section>
       }
     </div>
@@ -216,7 +229,20 @@
             <p class="chat-part__report-text">{{ item.narrative }}</p>
           }
           @if (item.chart; as chart) {
-            <app-chat-chart [spec]="chart" />
+            <div class="chat-part__chart-kpis">
+              @for (kpi of chartKpis(chart); track kpi.label) {
+                <div class="chat-part__chart-kpi">
+                  <div class="chat-part__chart-kpi-label">{{ kpi.label }}</div>
+                  <div class="chat-part__chart-kpi-value">{{ kpi.value }}</div>
+                  @if (kpi.hint) {
+                    <div class="chat-part__chart-kpi-hint">{{ kpi.hint }}</div>
+                  }
+                </div>
+              }
+            </div>
+            <div class="chat-part__chart-card">
+              <app-chat-chart [spec]="chart" />
+            </div>
           }
         </section>
       }

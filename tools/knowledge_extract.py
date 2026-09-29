@@ -227,3 +227,30 @@ async def maybe_extract_knowledge_from_sql(
         logger.exception("SQL %s 审核通过后抽取业务知识失败", after.uuid)
         return after
     return await get_sql(after.uuid)
+
+
+_EXTRACTING_SQL_UUIDS: set[str] = set()
+
+
+def schedule_knowledge_extract_from_sql(
+        add_background_task,
+        workspace_id: str,
+        before: SQLNode,
+        after: SQLNode,
+) -> bool:
+    """审核接口先返回；知识抽取放到响应后的后台任务，避免页面卡住。"""
+    if not should_extract_knowledge_from_sql(before, after):
+        return False
+    sql_uuid = (after.uuid or "").strip()
+    if not sql_uuid or sql_uuid in _EXTRACTING_SQL_UUIDS:
+        return False
+    _EXTRACTING_SQL_UUIDS.add(sql_uuid)
+
+    async def _run() -> None:
+        try:
+            await maybe_extract_knowledge_from_sql(workspace_id, before, after)
+        finally:
+            _EXTRACTING_SQL_UUIDS.discard(sql_uuid)
+
+    add_background_task(_run)
+    return True

@@ -264,11 +264,19 @@ class UserFacingRuntimeErrorTest(unittest.TestCase):
         self.assertIn("分析图表还没生成完", message)
         self.assertNotIn("生成分析报告", message)
 
-    def test_non_quota_error_keeps_original_text(self) -> None:
+    def test_non_quota_error_hides_raw_exception(self) -> None:
         self.assertEqual(
             _user_facing_runtime_error(Exception("内部错误")),
-            "内部错误",
+            "模型调用失败，请稍后再试。",
         )
+
+    def test_connection_error_uses_chinese_hint(self) -> None:
+        message = _user_facing_runtime_error(
+            Exception("litellm.InternalServerError: OpenAIException - Connection error."),
+            stage="extractor",
+        )
+        self.assertIn("模型接口连接失败", message)
+        self.assertNotIn("litellm", message)
 
 
 class RuntimeHeartbeatTest(unittest.IsolatedAsyncioTestCase):

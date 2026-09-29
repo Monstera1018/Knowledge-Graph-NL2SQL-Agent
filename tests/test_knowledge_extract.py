@@ -8,7 +8,11 @@ from tools.graph.model import (
     SQLNode,
     SQLReviewStatus,
 )
-from tools.knowledge_extract import parse_extracted_knowledge_items, should_extract_knowledge_from_sql
+from tools.knowledge_extract import (
+    parse_extracted_knowledge_items,
+    schedule_knowledge_extract_from_sql,
+    should_extract_knowledge_from_sql,
+)
 from tools.knowledge_similarity import (
     find_best_similar_knowledge,
     is_similar_knowledge,
@@ -70,6 +74,43 @@ class KnowledgeExtractParseTest(unittest.TestCase):
         failed = _sql(enabled=False, review_status="approved", knowledge_extracted=False)
         retry = _sql(enabled=True, review_status="approved", knowledge_extracted=False)
         self.assertTrue(should_extract_knowledge_from_sql(failed, retry))
+
+    def test_schedule_extract_skips_already_extracted(self) -> None:
+        scheduled: list[object] = []
+        pending = _sql()
+        extracted = _sql(enabled=True, review_status="approved", knowledge_extracted=True)
+        scheduled_ok = schedule_knowledge_extract_from_sql(
+            scheduled.append,
+            "default",
+            pending,
+            extracted,
+        )
+        self.assertFalse(scheduled_ok)
+        self.assertEqual(scheduled, [])
+
+    def test_schedule_extract_queues_first_approve(self) -> None:
+        scheduled: list[object] = []
+        pending = _sql()
+        approved = _sql(enabled=True, review_status="approved", knowledge_extracted=False)
+        scheduled_ok = schedule_knowledge_extract_from_sql(
+            scheduled.append,
+            "default",
+            pending,
+            approved,
+        )
+        self.assertTrue(scheduled_ok)
+        self.assertEqual(len(scheduled), 1)
+        scheduled_again = schedule_knowledge_extract_from_sql(
+            scheduled.append,
+            "default",
+            pending,
+            approved,
+        )
+        self.assertFalse(scheduled_again)
+        self.assertEqual(len(scheduled), 1)
+        from tools.knowledge_extract import _EXTRACTING_SQL_UUIDS
+
+        _EXTRACTING_SQL_UUIDS.discard(approved.uuid)
 
 
 class KnowledgeReviewHelpersTest(unittest.TestCase):

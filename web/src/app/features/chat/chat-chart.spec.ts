@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseChartSpec } from './chat-chart';
+import { formatChartNumber, parseChartSpec, summarizeChartKpis } from './chat-chart';
 
 describe('parseChartSpec', () => {
   it('keeps valid bar charts and drops incomplete ones', () => {
@@ -16,7 +16,7 @@ describe('parseChartSpec', () => {
           categories: ['金华', '宁波'],
           series: [{ name: '用户数', values: [2, 1] }],
         },
-        { title: '无效', type: 'radar', categories: ['a'], series: [] },
+        { title: '无效', type: 'unknown', categories: ['a'], series: [] },
       ],
     });
     expect(spec.feasible).toBe(true);
@@ -64,6 +64,45 @@ describe('parseChartSpec', () => {
       ],
     });
     expect(spec.charts[0].palette).toEqual(['#ea580c', '#f59e0b']);
+  });
+
+  it('keeps radar and scatter charts', () => {
+    const spec = parseChartSpec({
+      feasible: true,
+      summary: '多图',
+      source_row_count: 4,
+      charts: [
+        {
+          title: '地区轮廓',
+          type: 'radar',
+          categories: ['杭州', '宁波', '金华'],
+          series: [{ name: '工单数', values: [3, 2, 1] }],
+        },
+        {
+          title: '容量与电量',
+          type: 'scatter',
+          categories: ['10', '20', '30'],
+          series: [{ name: '电量', values: [100, 80, 40] }],
+        },
+      ],
+    });
+    expect(spec.charts.map((item) => item.type)).toEqual(['radar', 'scatter']);
+  });
+
+  it('summarizes KPI totals and the largest category', () => {
+    const kpis = summarizeChartKpis({
+      title: '各地区用户数',
+      type: 'bar',
+      note: '',
+      categories: ['金华', '宁波'],
+      series: [{ name: '用户数', values: [2, 1] }],
+      palette: [],
+    });
+    expect(kpis.map((item) => item.label)).toEqual(['合计', '最大类', '最大占比', '均值']);
+    expect(kpis[0].value).toBe('3');
+    expect(kpis[1].value).toBe('金华');
+    expect(kpis[2].value).toBe('66.7%');
+    expect(formatChartNumber(12000)).toBe('1.2万');
   });
 
   it('marks infeasible plans without charts', () => {

@@ -400,6 +400,45 @@ class PlanNormalizeTest(unittest.TestCase):
         )
         self.assertEqual(plan["next"], PLAN_STEP_QUERY)
 
+    def test_chart_infeasible_compound_column_message_requeries(self):
+        message = "进行图表分析"
+        first = normalize_plan(
+            next_step="query",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=False,
+        )
+        charted = normalize_plan(
+            next_step="chart",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_QUERY,
+                "status": "success",
+                "code": OBS_QUERY_SUCCESS,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+            },
+            previous_plan=first,
+        )
+        plan = normalize_plan(
+            next_step="stop",
+            extraction=_extraction(task="query", retrieval_query=message),
+            user_message=message,
+            has_snapshot=True,
+            observation={
+                "last_next": PLAN_STEP_CHART,
+                "status": "failed",
+                "code": OBS_CHART_INFEASIBLE,
+                "has_snapshot": True,
+                "snapshot_grain": "detail",
+                "detail": "当前查询结果中不存在「客户名称(记账单号)」对应列，无法按指定维度绘图。",
+            },
+            previous_plan=charted,
+        )
+        self.assertEqual(plan["next"], PLAN_STEP_QUERY)
+
     def test_chart_infeasible_on_detail_allows_one_rewrite(self):
         first = normalize_plan(
             next_step="query",

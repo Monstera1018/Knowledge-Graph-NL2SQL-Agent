@@ -29,6 +29,13 @@ _AUTH_RE = re.compile(
     r"invalid api key|unauthorized|authentication|401\b|forbidden|403\b",
     re.I,
 )
+_CONNECTION_RE = re.compile(
+    r"connection error|connection reset|connect(?:ion)?(?:ed)? (?:refused|aborted|timeout)|"
+    r"connecterror|api.?connection|timed? ?out|ssl|tls|handshake|"
+    r"server disconnected|name resolution|temporary failure|"
+    r"连接(?:失败|重置|中断|超时|错误)|无法连接",
+    re.I,
+)
 _FALLBACK_DELAY_S = 0.5
 _RATE_LIMIT_COOLDOWN_S = 180.0
 _RATE_LIMITED_UNTIL: dict[str, float] = {}
@@ -168,6 +175,27 @@ def is_llm_quota_or_rate_limit_error(exc: BaseException) -> bool:
     return False
 
 
+def is_llm_connection_error(exc: BaseException) -> bool:
+    """网关握手失败、超时或连接被重置时，改走备用套餐。"""
+    for item in _iter_exceptions(exc):
+        if isinstance(item, (ConnectionError, TimeoutError, BrokenPipeError, ConnectionResetError)):
+            return True
+        status = getattr(item, "status_code", None)
+        if status is None:
+            status = getattr(item, "status", None)
+        text = str(item)
+        if status in {502, 503, 504} or _CONNECTION_RE.search(text):
+            if status in (401, 403) or _AUTH_RE.search(text):
+                continue
+            return True
+    return False
+
+
+def is_llm_failover_error(exc: BaseException) -> bool:
+    """限流/额度或连通性故障时切换备用套餐。"""
+    return is_llm_quota_or_rate_limit_error(exc) or is_llm_connection_error(exc)
+
+
 def _chunk_has_model_output(chunk: Any) -> bool:
     """是否已向调用方产出实质模型内容。空的流式分片不计入，以免挡住套餐切换。"""
 
@@ -197,7 +225,7 @@ async def generate_with_failover(
     llm_request: Any,
     stream: bool = False,
 ) -> AsyncIterator[Any]:
-    """依次尝试多套模型后端；仅在尚未向调用方产出内容且错误为限流/额度时切换。"""
+    """依次尝试多套模型后端；尚未产出内容且属于限流/额度/连接故障时切换。"""
 
     if not backends:
         raise RuntimeError("没有可用的模型套餐")
@@ -239,13 +267,13 @@ async def generate_with_failover(
         except BaseException as exc:
             last_error = exc
             has_next = index + 1 < total
-            if is_llm_quota_or_rate_limit_error(exc):
+            if is_llm_failover_error(exc):
                 mark_profile_rate_limited(backend)
-            if emitted or not has_next or not is_llm_quota_or_rate_limit_error(exc):
+            if emitted or not has_next or not is_llm_failover_error(exc):
                 raise
             next_backend = backends[index + 1]
             logger.warning(
-                "模型套餐 %s 触发限流或额度限制，切换到 %s 重试: %s",
+                "模型套餐 %s 调用失败，切换到 %s 重试: %s",
                 getattr(backend, "profile_name", getattr(backend, "model", index)),
                 getattr(next_backend, "profile_name", getattr(next_backend, "model", index + 1)),
                 exc,
@@ -359,12 +387,12 @@ async def chat(
         except BaseException as exc:
             last_error = exc
             has_next = index + 1 < len(profiles)
-            if is_llm_quota_or_rate_limit_error(exc):
+            if is_llm_failover_error(exc):
                 mark_profile_rate_limited(profile)
-            if not has_next or not is_llm_quota_or_rate_limit_error(exc):
+            if not has_next or not is_llm_failover_error(exc):
                 raise
             logger.warning(
-                "模型套餐 %s 触发限流或额度限制，切换到 %s 重试: %s",
+                "模型套餐 %s 调用失败，切换到 %s 重试: %s",
                 profile.name,
                 profiles[index + 1].name,
                 exc,

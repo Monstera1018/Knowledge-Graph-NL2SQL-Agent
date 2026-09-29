@@ -8,20 +8,39 @@ import {
   input,
   viewChild,
 } from '@angular/core';
-import { BarChart, LineChart, PieChart } from 'echarts/charts';
+import { BarChart, FunnelChart, LineChart, PieChart, RadarChart, ScatterChart } from 'echarts/charts';
 import {
   GridComponent,
   LegendComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  RadarComponent,
+  TitleComponent,
   TooltipComponent,
 } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import type { EChartsCoreOption, EChartsType } from 'echarts/core';
+import type { EChartsType } from 'echarts/core';
 
+import { buildChartOption } from '../chat-chart-option';
 import type { ChatChartView } from '../chat-chart';
-import { DEFAULT_CHART_PALETTE } from '../chat-chart';
 
-echarts.use([BarChart, LineChart, PieChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([
+  BarChart,
+  LineChart,
+  PieChart,
+  RadarChart,
+  ScatterChart,
+  FunnelChart,
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  MarkPointComponent,
+  RadarComponent,
+  TitleComponent,
+  TooltipComponent,
+  CanvasRenderer,
+]);
 
 @Component({
   selector: 'app-chat-chart',
@@ -71,47 +90,4 @@ export class ChatChartComponent implements OnDestroy {
     }
     this.chart.setOption(buildChartOption(this.spec()), true);
   }
-}
-
-function buildChartOption(spec: ChatChartView): EChartsCoreOption {
-  const palette = spec.palette.length ? spec.palette : DEFAULT_CHART_PALETTE;
-  if (spec.type === 'pie') {
-    const values = spec.series[0]?.values ?? [];
-    return {
-      color: palette,
-      tooltip: { trigger: 'item' },
-      legend: { type: 'scroll', bottom: 0 },
-      series: [
-        {
-          type: 'pie',
-          name: spec.series[0]?.name || spec.title,
-          radius: ['36%', '64%'],
-          data: spec.categories.map((name, index) => ({
-            name,
-            value: values[index] ?? 0,
-          })),
-        },
-      ],
-    };
-  }
-
-  return {
-    color: palette,
-    tooltip: { trigger: 'axis' },
-    legend: spec.series.length > 1 ? { top: 0 } : undefined,
-    grid: { left: 40, right: 16, top: spec.series.length > 1 ? 36 : 16, bottom: 32 },
-    xAxis: {
-      type: 'category',
-      data: spec.categories,
-      axisLabel: { hideOverlap: true },
-    },
-    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#e2e8f0' } } },
-    series: spec.series.map((entry) => ({
-      type: spec.type,
-      name: entry.name,
-      data: entry.values,
-      smooth: spec.type === 'line',
-      barMaxWidth: 36,
-    })),
-  };
 }

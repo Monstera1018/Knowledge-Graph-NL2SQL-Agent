@@ -138,6 +138,9 @@ def snapshot_missing_chart_columns(observation: dict[str, Any] | None) -> bool:
             "不在当前结果中",
             "缺少合适的分析维度",
             "没有可绑定的图表定义",
+            "不存在",
+            "对应列",
+            "无法按指定维度",
         )
     )
 

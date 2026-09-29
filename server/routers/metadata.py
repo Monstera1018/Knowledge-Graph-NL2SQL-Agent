@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from tools.graph import (
@@ -43,7 +43,7 @@ from tools.graph.crud.sql import upsert_llm_generated_sql
 from server.schemas.common import Page
 from server.auth.deps import get_workspace_id
 from tools.graph.model import ColumnNode, EnumListItem, EnumNode, KnowledgeNode, SQLNode, TableNode
-from tools.knowledge_extract import maybe_extract_knowledge_from_sql
+from tools.knowledge_extract import schedule_knowledge_extract_from_sql
 
 # ---------------------------------------------------------------------------
 # 数据模型
@@ -703,6 +703,7 @@ async def get_sql_item(
 async def update_sql_item(
         uuid: str,
         body: SQLUpdate,
+        background_tasks: BackgroundTasks,
         workspace_id: str = Depends(get_workspace_id),
 ) -> SQLNode:
     current = _assert_workspace(await get_sql(uuid), workspace_id)
@@ -717,7 +718,13 @@ async def update_sql_item(
         review_status=body.review_status,
         preserve_uuid=True,
     )
-    return await maybe_extract_knowledge_from_sql(workspace_id, current, updated)
+    schedule_knowledge_extract_from_sql(
+        background_tasks.add_task,
+        workspace_id,
+        current,
+        updated,
+    )
+    return updated
 
 
 @sqls_router.delete("/{uuid}", status_code=204)

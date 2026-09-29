@@ -129,8 +129,22 @@
         @if (columns().length === 0) {
           <div class="knowledge-relation-dialog__status">该表暂无列元数据，将按整表关联</div>
         } @else {
+          <label class="app-search knowledge-relation-dialog__search knowledge-relation-dialog__column-search">
+            <mat-icon class="app-search__icon">search</mat-icon>
+            <input
+              class="app-search__input"
+              type="search"
+              placeholder="搜索字段名、注释或类型…"
+              [ngModel]="columnQuery()"
+              (ngModelChange)="onColumnQueryChange($event)"
+              [disabled]="wholeTable()"
+            />
+          </label>
+          @if (filteredColumns().length === 0) {
+            <div class="knowledge-relation-dialog__status">未找到匹配的字段</div>
+          } @else {
           <div class="knowledge-relation-dialog__column-list">
-            @for (column of columns(); track column.uuid) {
+            @for (column of filteredColumns(); track column.uuid) {
               <label
                 class="knowledge-relation-dialog__col-item"
                 [class.knowledge-relation-dialog__col-item--disabled]="wholeTable()"
@@ -161,6 +175,7 @@
               </label>
             }
           </div>
+          }
         }
       }
     </section>

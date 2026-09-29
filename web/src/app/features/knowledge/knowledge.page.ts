@@ -478,8 +478,10 @@ export class KnowledgePage {
       backdropClass: 'app-dialog-backdrop',
       autoFocus: 'first-tabbable',
       restoreFocus: true,
-      width: 'min(56rem, calc(100vw - 2rem))',
-      maxHeight: '90vh',
+      width: '80rem',
+      maxWidth: 'calc(100vw - 2rem)',
+      height: 'min(48rem, calc(100vh - 4rem))',
+      maxHeight: 'calc(100vh - 4rem)',
     });
 
     ref

@@ -132,60 +132,46 @@ export function sortVisibleParts(parts: readonly MessagePart[]): MessagePart[] {
 
 export function mergeDisplayToolParts(parts: readonly MessagePart[]): MessagePart[] {
   const merged: MessagePart[] = [];
-  const tableContextParts: ToolPart[] = [];
-  let tableContextIndex = -1;
-  const planParts: ToolPart[] = [];
-  let planIndex = -1;
-  const chartParts: ToolPart[] = [];
-  let chartIndex = -1;
-  const reportParts: ToolPart[] = [];
-  let reportIndex = -1;
+  let groupKind: 'plan' | 'table' | 'chart' | 'report' | null = null;
+  let groupParts: ToolPart[] = [];
+  let groupIndex = -1;
+
+  const flushGroup = () => {
+    groupKind = null;
+    groupParts = [];
+    groupIndex = -1;
+  };
+
+  const appendGroup = (kind: 'plan' | 'table' | 'chart' | 'report', part: ToolPart, build: (items: ToolPart[]) => ToolPart) => {
+    if (groupKind !== kind) {
+      groupParts = [part];
+      groupKind = kind;
+      groupIndex = merged.length;
+      merged.push(build(groupParts));
+      return;
+    }
+    groupParts = [...groupParts, part];
+    merged[groupIndex] = build(groupParts);
+  };
 
   for (const part of parts) {
-    if (part.kind === 'tool' && TABLE_CONTEXT_TOOL_NAMES.has(part.name)) {
-      tableContextParts.push(part);
-      const tableContext = buildTableContextPart(tableContextParts);
-      if (tableContextIndex < 0) {
-        tableContextIndex = merged.length;
-        merged.push(tableContext);
-      } else {
-        merged[tableContextIndex] = tableContext;
-      }
+    if (part.kind === 'tool' && PLAN_TOOL_NAMES.has(part.name)) {
+      appendGroup('plan', part, buildTaskPlanPart);
       continue;
     }
-    if (part.kind === 'tool' && PLAN_TOOL_NAMES.has(part.name)) {
-      planParts.push(part);
-      const planPart = buildTaskPlanPart(planParts);
-      if (planIndex < 0) {
-        planIndex = merged.length;
-        merged.push(planPart);
-      } else {
-        merged[planIndex] = planPart;
-      }
+    if (part.kind === 'tool' && TABLE_CONTEXT_TOOL_NAMES.has(part.name)) {
+      appendGroup('table', part, buildTableContextPart);
       continue;
     }
     if (part.kind === 'tool' && CHART_TOOL_NAMES.has(part.name)) {
-      chartParts.push(part);
-      const chartPart = buildChartAnalysisPart(chartParts);
-      if (chartIndex < 0) {
-        chartIndex = merged.length;
-        merged.push(chartPart);
-      } else {
-        merged[chartIndex] = chartPart;
-      }
+      appendGroup('chart', part, buildChartAnalysisPart);
       continue;
     }
     if (part.kind === 'tool' && REPORT_TOOL_NAMES.has(part.name)) {
-      reportParts.push(part);
-      const reportPart = buildReportAnalysisPart(reportParts);
-      if (reportIndex < 0) {
-        reportIndex = merged.length;
-        merged.push(reportPart);
-      } else {
-        merged[reportIndex] = reportPart;
-      }
+      appendGroup('report', part, buildReportAnalysisPart);
       continue;
     }
+    flushGroup();
     merged.push(part);
   }
 
