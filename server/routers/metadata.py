@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -116,6 +118,21 @@ class KnowledgeUpdate(BaseModel):
     relations: list[KnowledgeRelationBody] | None = None
     enabled: bool | None = None
     review_status: str | None = None
+
+
+class BatchActionBody(BaseModel):
+    uuids: list[str] = Field(min_length=1, max_length=500)
+    action: Literal["approve", "enable", "disable", "delete"]
+
+
+class BatchActionResult(BaseModel):
+    ok: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+
+def _dedupe_uuids(uuids: list[str]) -> list[str]:
+    return list(dict.fromkeys(item.strip() for item in uuids if str(item).strip()))
 
 
 class KnowledgeRelationView(BaseModel):
@@ -535,6 +552,44 @@ async def create_knowledge_item(
     )
 
 
+@knowledge_router.post("/batch", response_model=BatchActionResult)
+async def batch_knowledge_items(
+        body: BatchActionBody,
+        workspace_id: str = Depends(get_workspace_id),
+) -> BatchActionResult:
+    ok = skipped = failed = 0
+    for uuid in _dedupe_uuids(body.uuids):
+        try:
+            node = await get_knowledge(uuid)
+            if getattr(node, "workspace_id", workspace_id) != workspace_id:
+                skipped += 1
+                continue
+            pending = str(node.review_status) == "pending"
+            if body.action == "approve":
+                if not pending:
+                    skipped += 1
+                    continue
+                await update_knowledge(workspace_id, uuid, review_status="approved")
+            elif body.action == "enable":
+                if pending or bool(node.enabled):
+                    skipped += 1
+                    continue
+                await update_knowledge(workspace_id, uuid, enabled=True)
+            elif body.action == "disable":
+                if pending or not bool(node.enabled):
+                    skipped += 1
+                    continue
+                await update_knowledge(workspace_id, uuid, enabled=False)
+            else:
+                await delete_knowledge(uuid)
+            ok += 1
+        except NotFoundError:
+            skipped += 1
+        except Exception:
+            failed += 1
+    return BatchActionResult(ok=ok, skipped=skipped, failed=failed)
+
+
 @knowledge_router.get("/{uuid}", response_model=KnowledgeDetail)
 async def get_knowledge_item(
         uuid: str,
@@ -667,6 +722,51 @@ async def precipitate_sql_item(
         review_status=str(node.review_status),
         enabled=bool(node.enabled),
     )
+
+
+@sqls_router.post("/batch", response_model=BatchActionResult)
+async def batch_sql_items(
+        body: BatchActionBody,
+        background_tasks: BackgroundTasks,
+        workspace_id: str = Depends(get_workspace_id),
+) -> BatchActionResult:
+    ok = skipped = failed = 0
+    for uuid in _dedupe_uuids(body.uuids):
+        try:
+            current = await get_sql(uuid)
+            if getattr(current, "workspace_id", workspace_id) != workspace_id:
+                skipped += 1
+                continue
+            pending = str(current.review_status) == "pending"
+            if body.action == "approve":
+                if not pending:
+                    skipped += 1
+                    continue
+                updated = await update_sql(workspace_id, uuid, review_status="approved", preserve_uuid=True)
+                schedule_knowledge_extract_from_sql(
+                    background_tasks.add_task,
+                    workspace_id,
+                    current,
+                    updated,
+                )
+            elif body.action == "enable":
+                if pending or bool(current.enabled):
+                    skipped += 1
+                    continue
+                await update_sql(workspace_id, uuid, enabled=True, preserve_uuid=True)
+            elif body.action == "disable":
+                if pending or not bool(current.enabled):
+                    skipped += 1
+                    continue
+                await update_sql(workspace_id, uuid, enabled=False, preserve_uuid=True)
+            else:
+                await delete_sql(uuid)
+            ok += 1
+        except NotFoundError:
+            skipped += 1
+        except Exception:
+            failed += 1
+    return BatchActionResult(ok=ok, skipped=skipped, failed=failed)
 
 
 @sqls_router.get("/{uuid}", response_model=SQLDetail)

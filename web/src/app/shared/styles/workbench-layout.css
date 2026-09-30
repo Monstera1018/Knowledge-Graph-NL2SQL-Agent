@@ -246,3 +246,44 @@
   grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
 }
 
+.workbench-batch-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+  padding-top: 0.625rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.workbench-batch-bar__select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.workbench-batch-bar__all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #334155;
+}
+
+.workbench-batch-bar__count {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.workbench-batch-bar__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.workbench-batch-bar__actions .app-btn {
+  width: 100%;
+  min-width: 0;
+}
+

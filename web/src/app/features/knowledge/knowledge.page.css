@@ -34,6 +34,24 @@
   border-color: #93c5fd;
 }
 
+.workbench__item--selectable {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+
+.workbench-item-check {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-top: 0.125rem;
+}
+
+.workbench-item-body {
+  min-width: 0;
+  flex: 1;
+}
+
 .knowledge-item-flags {
   display: inline-flex;
   flex-shrink: 0;

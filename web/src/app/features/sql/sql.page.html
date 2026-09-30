@@ -76,6 +76,56 @@
             <span class="workbench__pane-meta-more">（已显示 {{ items().length }}）</span>
           }
         </div>
+        <div class="workbench-batch-bar">
+          <div class="workbench-batch-bar__select">
+            <label class="workbench-batch-bar__all">
+              <input
+                type="checkbox"
+                [checked]="allVisibleChecked()"
+                [disabled]="items().length === 0 || batchBusy()"
+                (change)="toggleSelectAll($event)"
+              />
+              全选
+            </label>
+            <span class="workbench-batch-bar__count">已选 {{ checkedCount() }}</span>
+          </div>
+          @if (checkedCount() > 0) {
+            <div class="workbench-batch-bar__actions">
+              <button
+                type="button"
+                class="app-btn app-btn--sm app-btn--confirm"
+                [disabled]="!canBatchApprove() || batchBusy()"
+                (click)="batchApprove()"
+              >
+                通过
+              </button>
+              <button
+                type="button"
+                class="app-btn app-btn--sm"
+                [disabled]="!canBatchEnable() || batchBusy()"
+                (click)="batchEnable()"
+              >
+                启用
+              </button>
+              <button
+                type="button"
+                class="app-btn app-btn--sm"
+                [disabled]="!canBatchDisable() || batchBusy()"
+                (click)="batchDisable()"
+              >
+                停用
+              </button>
+              <button
+                type="button"
+                class="app-btn app-btn--sm app-btn--danger"
+                [disabled]="!canBatchDelete() || batchBusy()"
+                (click)="batchDelete()"
+              >
+                删除
+              </button>
+            </div>
+          }
+        </div>
       </div>
 
       <div class="workbench__pane-list">
@@ -92,13 +142,23 @@
         } @else {
           @for (item of items(); track item.uuid) {
             <div
-              class="workbench__item"
+              class="workbench__item workbench__item--selectable"
               [class.workbench__item--active]="selected()?.uuid === item.uuid"
               (click)="selectItem(item)"
               (keydown.enter)="selectItem(item)"
               tabindex="0"
               role="button"
             >
+              <label class="workbench-item-check" (click)="$event.stopPropagation()">
+                <input
+                  type="checkbox"
+                  [checked]="isChecked(item.uuid)"
+                  [disabled]="batchBusy()"
+                  (change)="toggleChecked($event, item.uuid)"
+                  [attr.aria-label]="'选择 ' + item.name"
+                />
+              </label>
+              <div class="workbench-item-body">
               <div class="workbench__item-row">
                 <span class="workbench__item-name" [appTruncateTooltip]="item.name">{{
                   item.name
@@ -152,6 +212,7 @@
                     {{ isEnabled(item) ? '启用' : '停用' }}
                   </button>
                 }
+              </div>
               </div>
             </div>
           }

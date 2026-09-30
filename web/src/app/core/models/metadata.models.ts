@@ -5,6 +5,14 @@ export interface Page<T> {
   page_size: number;
 }
 
+export interface BatchActionResult {
+  ok: number;
+  skipped: number;
+  failed: number;
+}
+
+export type BatchAction = 'approve' | 'enable' | 'disable' | 'delete';
+
 export interface BaseNode {
   uuid: string;
   workspace_id: string;

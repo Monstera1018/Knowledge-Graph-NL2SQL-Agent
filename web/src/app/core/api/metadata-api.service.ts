@@ -7,6 +7,8 @@ import {
   ColumnNode,
   EnumListItem,
   EnumNode,
+  BatchAction,
+  BatchActionResult,
   GraphSnapshot,
   JobCreatedResponse,
   JobSnapshot,
@@ -165,6 +167,10 @@ export class MetadataApiService {
     return this.http.delete<void>(`/api/knowledge/${uuid}`);
   }
 
+  batchKnowledge(uuids: string[], action: BatchAction): Observable<BatchActionResult> {
+    return this.http.post<BatchActionResult>('/api/knowledge/batch', { uuids, action });
+  }
+
   listSqls(query: ListQuery = {}): Observable<Page<SQLNode>> {
     return this.http.get<Page<SQLNode>>('/api/sqls', { params: this.toParams(query) });
   }
@@ -190,6 +196,10 @@ export class MetadataApiService {
 
   deleteSql(uuid: string): Observable<void> {
     return this.http.delete<void>(`/api/sqls/${uuid}`);
+  }
+
+  batchSql(uuids: string[], action: BatchAction): Observable<BatchActionResult> {
+    return this.http.post<BatchActionResult>('/api/sqls/batch', { uuids, action });
   }
 
   listImportJobs(): Observable<JobSnapshot[]> {

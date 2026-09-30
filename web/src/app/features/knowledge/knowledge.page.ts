@@ -18,7 +18,13 @@ import {
 import { LIST_ALL_PAGE_SIZE, listAllQuery } from '../../core/api/list-query';
 import { MetadataApiService } from '../../core/api/metadata-api.service';
 import { createRequestGuard } from '../../core/api/request-guard';
-import { GraphSnapshot, KnowledgeNode, KnowledgeRelation } from '../../core/models/metadata.models';
+import {
+  BatchAction,
+  BatchActionResult,
+  GraphSnapshot,
+  KnowledgeNode,
+  KnowledgeRelation,
+} from '../../core/models/metadata.models';
 import { formatApiError } from '../../shared/feedback/api-error';
 import { AppSnackService } from '../../shared/feedback/app-snack.service';
 import { ConfirmDialogService } from '../../shared/feedback/confirm-dialog.service';
@@ -73,6 +79,8 @@ export class KnowledgePage {
   protected readonly sort = signal('time_desc');
   protected readonly togglingUuid = signal<string | null>(null);
   protected readonly reviewingUuid = signal<string | null>(null);
+  protected readonly checkedUuids = signal<Set<string>>(new Set());
+  protected readonly batchBusy = signal(false);
   protected readonly selected = signal<KnowledgeNode | null>(null);
   protected readonly relations = signal<KnowledgeRelationDraft[]>([]);
   protected readonly relationsLoading = signal(false);
@@ -98,6 +106,24 @@ export class KnowledgePage {
     const description = this.selected()?.description?.trim() ?? '';
     return description.length > 0;
   });
+
+  protected readonly checkedCount = computed(() => this.checkedUuids().size);
+  protected readonly checkedItems = computed(() => {
+    const ids = this.checkedUuids();
+    return this.items().filter((item) => ids.has(item.uuid));
+  });
+  protected readonly allVisibleChecked = computed(() => {
+    const rows = this.items();
+    return rows.length > 0 && rows.every((item) => this.checkedUuids().has(item.uuid));
+  });
+  protected readonly canBatchApprove = computed(() => this.checkedItems().some((item) => knowledgeIsPending(item)));
+  protected readonly canBatchEnable = computed(() =>
+    this.checkedItems().some((item) => !knowledgeIsPending(item) && !knowledgeIsEnabled(item)),
+  );
+  protected readonly canBatchDisable = computed(() =>
+    this.checkedItems().some((item) => !knowledgeIsPending(item) && knowledgeIsEnabled(item)),
+  );
+  protected readonly canBatchDelete = computed(() => this.checkedCount() > 0);
 
   protected readonly longDescription = computed(() => {
     const description = this.selected()?.description?.trim() ?? '';
@@ -348,6 +374,147 @@ export class KnowledgePage {
 
   protected timeLabel(item: KnowledgeNode | null): string {
     return knowledgeTimeLabel(item);
+  }
+
+  protected isChecked(uuid: string): boolean {
+    return this.checkedUuids().has(uuid);
+  }
+
+  protected toggleChecked(event: Event, uuid: string): void {
+    event.stopPropagation();
+    const input = event.target as HTMLInputElement;
+    this.checkedUuids.update((current) => {
+      const next = new Set(current);
+      if (input.checked) {
+        next.add(uuid);
+      } else {
+        next.delete(uuid);
+      }
+      return next;
+    });
+  }
+
+  protected toggleSelectAll(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (input.checked) {
+      this.checkedUuids.set(new Set(this.items().map((item) => item.uuid)));
+      return;
+    }
+    this.checkedUuids.set(new Set());
+  }
+
+  protected async batchApprove(): Promise<void> {
+    const uuids = this.checkedItems()
+      .filter((item) => knowledgeIsPending(item))
+      .map((item) => item.uuid);
+    await this.runBatch(
+      'approve',
+      uuids,
+      '批量通过',
+      `将通过选中的 ${uuids.length} 条待审核知识并启用，写入问数检索。`,
+      '通过',
+      false,
+    );
+  }
+
+  protected async batchEnable(): Promise<void> {
+    const uuids = this.checkedItems()
+      .filter((item) => !knowledgeIsPending(item) && !knowledgeIsEnabled(item))
+      .map((item) => item.uuid);
+    await this.runBatch(
+      'enable',
+      uuids,
+      '批量启用',
+      `将启用选中的 ${uuids.length} 条已审核知识，用于问数检索。`,
+      '启用',
+      false,
+    );
+  }
+
+  protected async batchDisable(): Promise<void> {
+    const uuids = this.checkedItems()
+      .filter((item) => !knowledgeIsPending(item) && knowledgeIsEnabled(item))
+      .map((item) => item.uuid);
+    await this.runBatch(
+      'disable',
+      uuids,
+      '批量停用',
+      `将停用选中的 ${uuids.length} 条知识，不再用于问数检索。`,
+      '停用',
+      false,
+    );
+  }
+
+  protected async batchDelete(): Promise<void> {
+    const uuids = this.checkedItems().map((item) => item.uuid);
+    await this.runBatch(
+      'delete',
+      uuids,
+      '批量删除',
+      `将删除选中的 ${uuids.length} 条知识，不可恢复。`,
+      '删除',
+      true,
+    );
+  }
+
+  private async runBatch(
+    action: BatchAction,
+    uuids: string[],
+    title: string,
+    message: string,
+    confirmLabel: string,
+    danger: boolean,
+  ): Promise<void> {
+    if (!uuids.length || this.batchBusy()) {
+      return;
+    }
+    const confirmed = await this.confirmDialog.confirm({ title, message, confirmLabel, danger });
+    if (!confirmed) {
+      return;
+    }
+    this.batchBusy.set(true);
+    this.api
+      .batchKnowledge(uuids, action)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (result) => {
+          this.batchBusy.set(false);
+          this.checkedUuids.set(new Set());
+          if (action === 'delete') {
+            this.clearSelectionIfRemoved(uuids);
+          }
+          this.fetchItems(this.query());
+          this.snack.success(this.batchResultMessage(result, title));
+        },
+        error: (err) => {
+          this.batchBusy.set(false);
+          this.handleError(`${title}失败`, err);
+        },
+      });
+  }
+
+  private batchResultMessage(result: BatchActionResult, title: string): string {
+    const parts = [`${title} ${result.ok} 条`];
+    if (result.skipped) {
+      parts.push(`跳过 ${result.skipped} 条`);
+    }
+    if (result.failed) {
+      parts.push(`失败 ${result.failed} 条`);
+    }
+    return parts.join('，');
+  }
+
+  private clearSelectionIfRemoved(uuids: string[]): void {
+    const selected = this.selected()?.uuid;
+    if (selected && uuids.includes(selected)) {
+      this.selected.set(null);
+      this.relations.set([]);
+      this.formMode.set('view');
+      this.formDraft.set(emptyKnowledgeForm());
+      this.detailView.set('detail');
+      this.overviewSnapshot.set(null);
+      this.graphSnapshot.set(null);
+    }
   }
 
   protected toggleEnabled(event: Event, item: KnowledgeNode): void {
@@ -621,6 +788,8 @@ export class KnowledgePage {
   }
 
   private syncSelectionAfterLoad(): void {
+    const alive = new Set(this.items().map((item) => item.uuid));
+    this.checkedUuids.update((current) => new Set([...current].filter((uuid) => alive.has(uuid))));
     const current = this.selected();
     if (!current) {
       return;
